@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+.pytest_cache/
+
+# Secrets and local configuration
+.env
+*.env.local
+credentials/
+*.json.key
+client_secret*.json
+service_account*.json
+token*.json
+
+# Local application state (never commit)
+data/
+*.db
+*.sqlite
+*.sqlite3
+logs/
+
+# Reference files are confidential local inputs
+reference_files/*
+!reference_files/README.md
+
+# Office / OneDrive temp files
+~$*
+*.tmp
+.vspm-tmp-*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

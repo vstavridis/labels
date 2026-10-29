@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Κράτηση barcode (DYMO)</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 640px; margin: 24px auto; padding: 0 16px; background: #f6f7f9; color: #1d2330; }
+  .card { background: #fff; border-radius: 10px; padding: 20px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  label { display: block; margin: 12px 0 4px; font-weight: bold; }
+  input, select, button { font-size: 18px; padding: 8px; width: 100%; box-sizing: border-box; }
+  button { margin-top: 18px; background: #1f5fbf; color: #fff; border: 0; border-radius: 6px; cursor: pointer; }
+  #out { margin-top: 18px; font-size: 20px; }
+  .big { font-size: 34px; font-weight: bold; letter-spacing: 1px; }
+  .warn { color: #a33; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h2>Κράτηση αριθμών barcode για χειροκίνητη εκτύπωση DYMO</h2>
+  <p>Πριν εκτυπώσετε από το DYMO Label, κρατήστε αριθμούς εδώ και ορίστε τον μετρητή (COUNTER) της ετικέτας
+     στον <b>πρώτο</b> αριθμό. Εκτυπώστε ακριβώς τόσες ετικέτες όσες κρατήσατε.</p>
+  <label>Κλειδί πρόσβασης (API key)</label><input id="key" type="password">
+  <label>Όνομα χειριστή</label><input id="op">
+  <label>Σειρά</label>
+  <select id="series"><option>VS</option><option>PG</option><option>PG0</option><option>EX</option></select>
+  <label>Πλήθος ετικετών</label><input id="count" type="number" min="1" max="200" value="1">
+  <button onclick="reserve()">Κράτηση</button>
+  <div id="out"></div>
+</div>
+<script>
+  for (const id of ["key", "op"]) {
+    try { document.getElementById(id).value = localStorage.getItem("vspm_" + id) || ""; } catch (e) {}
+  }
+  async function reserve() {
+    const key = document.getElementById("key").value, op = document.getElementById("op").value.trim();
+    const out = document.getElementById("out");
+    if (!op) { out.innerHTML = '<p class="warn">Συμπληρώστε όνομα χειριστή.</p>'; return; }
+    try { localStorage.setItem("vspm_key", key); localStorage.setItem("vspm_op", op); } catch (e) {}
+    const body = { series: document.getElementById("series").value, count: parseInt(document.getElementById("count").value, 10),
+                   operator: op, computer: navigator.userAgent.slice(0, 90), request_id: crypto.randomUUID() };
+    const r = await fetch("v1/blocks", { method: "POST", headers: { "Content-Type": "application/json", "X-API-Key": key }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!r.ok) { out.innerHTML = '<p class="warn">Σφάλμα: ' + (d.detail || r.status) + '</p>'; return; }
+    out.innerHTML = '<p>Ορίστε τον μετρητή DYMO στο:</p><p class="big">' + d.first + '</p>' +
+      '<p>Barcodes: ' + d.barcodes[0] + (d.barcodes.length > 1 ? ' … ' + d.barcodes[d.barcodes.length - 1] : '') + '</p>';
+  }
+</script>
+</body>
+</html>

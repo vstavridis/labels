@@ -1,0 +1,39 @@
+# Material names.
+#   canonical : the Greek name used on VS/PG labels and in Excel column A
+#   en        : English name for EX labels. null = not established yet; the
+#               operator must type it (the app will not guess a translation).
+#   aliases   : other spellings that mean the same material (add when confirmed)
+#
+# Only GALVANIZED is established (it appears on the EX template sample).
+# Names that are already Latin (MIXED, INOX, RAL 9003...) are used unchanged.
+
+materials:
+  - canonical: "ΓΑΛΒΑΝΙΖΕ"
+    en: "GALVANIZED"
+    aliases: []
+  - canonical: "ΗΛΕΚΤΡΟΓΑΛΒΑΝΙΖΕ"
+    en: null
+    aliases: []
+  - canonical: "ΝΤΕΚΑΠΕ"
+    en: null
+    aliases: []
+  - canonical: "ΘΕΡΜΟ"
+    en: null
+    aliases: []
+  - canonical: "Ρ+Ο"
+    en: null
+    aliases: []
+
+# Dimension text transformations for the label. Disabled unless you confirm
+# them as business rules. Each is a regular expression replacement.
+dimension_rules:
+  - name: "Latin X between numbers -> Greek Χ (as in most workbook rows)"
+    pattern: "(?<=\\d)\\s*[Xx×]\\s*(?=\\d|ΡΟΛΟ|L)"
+    replace: "Χ"
+    enabled: false
+    templates: [VS, PG, PG0]
+  - name: "ΡΟΛΟ written as L"
+    pattern: "(?<=Χ)L$"
+    replace: "ΡΟΛΟ"
+    enabled: false
+    templates: [VS, PG, PG0]

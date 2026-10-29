@@ -1,0 +1,26 @@
+# Barcode registry + PostgreSQL. Put it behind HTTPS (e.g. Caddy/Traefik or a
+# managed platform) before exposing it to the internet.
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: vspm_registry
+      POSTGRES_USER: vspm
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+  registry:
+    build:
+      context: ../..
+      dockerfile: deploy/registry/Dockerfile
+    restart: unless-stopped
+    depends_on: [db]
+    environment:
+      VSPM_REGISTRY_DATABASE_URL: postgresql+psycopg://vspm:${POSTGRES_PASSWORD}@db:5432/vspm_registry
+      VSPM_REGISTRY_API_KEYS: ${VSPM_REGISTRY_API_KEYS:?comma separated client keys}
+      VSPM_REGISTRY_ADMIN_KEY: ${VSPM_REGISTRY_ADMIN_KEY:?admin key}
+    ports:
+      - "8765:8765"
+volumes:
+  pgdata:

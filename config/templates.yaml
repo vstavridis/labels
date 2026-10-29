@@ -1,0 +1,97 @@
+# DYMO label templates used by VS Production Manager.
+#
+# The original .label files are NEVER modified. At print time the app makes an
+# in-memory working copy, fills the text runs below, sets the barcode to the
+# number allocated by the barcode registry and removes the link to DYMO's own
+# COUNTER object (so DYMO cannot substitute an uncoordinated number).
+#
+# text_runs: one entry per <Element> of the template's TEXT object, in order.
+# Fonts/bold/size of each run are kept from the template; only the text changes.
+# Placeholders: {material} {thickness} {dimensions} {pieces} {customer} {weight}
+# The app refuses to print if the number of runs in the file differs (that
+# means somebody edited the template and this mapping must be reviewed).
+
+templates:
+  VS:
+    description: "ΚΟΜΜΕΝΑ - default"
+    files: ["ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1.label", "ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1(1).label"]
+    barcode_prefix: VS
+    excel_category: VS
+    label_language: el
+    thickness_decimal: ","          # template sample shows "0,70"
+    text_object: TEXT
+    text_runs:
+      - "{material}\nΠΑΧΟΣ "
+      - ": {thickness}\n"
+      - "ΔΙΑΣΤΑΣΕΙΣ:"
+      - " {dimensions}\n"
+      - "ΤΕΜΑΧΙΑ "
+      - ": {pieces}\n"
+      - "ΠΕΛΑΤΗΣ : {customer}"
+    weight_object: Quantity
+    barcode_object: BARCODE
+    counter_object: COUNTER
+
+  PG:
+    description: "ΠΑΓΟΥΝΗ"
+    files: ["ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-1.label"]
+    barcode_prefix: PG
+    excel_category: PG
+    label_language: el
+    thickness_decimal: "."          # template sample shows "0.80"
+    text_object: TEXT
+    text_runs:
+      - "{material}\n"
+      - "ΠΑΧΟΣ :"
+      - " {thickness}\n"
+      - "ΔΙΑΣΤΑΣΕΙΣ"
+      - " : {dimensions}\n"
+      - "ΤΕΜΑΧΙΑ :"
+      - " {pieces}\n"
+      - "ΠΕΛΑΤΗΣ : {customer}"
+    weight_object: Quantity
+    barcode_object: BARCODE
+    counter_object: COUNTER
+
+  PG0:
+    description: "ΠΑΓΟΥΝΗ-2 (ΚΥΡΙΑΚΙΔΗΣ)"
+    files: ["ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-2.label"]
+    barcode_prefix: PG0
+    excel_category: PG              # PG0 is recorded as PG in column G
+    label_language: el
+    thickness_decimal: "."          # template sample shows "0.50"
+    text_object: TEXT
+    # NOTE: this template has no ΠΕΛΑΤΗΣ line. The short customer name is still
+    # stored in Excel column F.
+    text_runs:
+      - "{material}\nΠΑΧΟΣ :"
+      - " {thickness}\n"
+      - "ΔΙΑΣΤΑΣΕΙΣ"
+      - " "
+      - ":"
+      - " {dimensions}\n"
+      - "ΤΕΜΑΧΙΑ :"
+      - " {pieces}"
+    weight_object: Quantity
+    barcode_object: BARCODE
+    counter_object: COUNTER
+
+  EX:
+    description: "ΕΞΑΓΩΓΕΣ (English label)"
+    files: ["ΕΤΙΚΕΤΑ ΕΞΑΓΩΓΕΣ.label"]
+    barcode_prefix: EX
+    excel_category: EX
+    label_language: en              # material names are translated via materials.yaml
+    thickness_decimal: ","          # template sample shows "0,55"
+    text_object: TEXT
+    text_runs:
+      - "{material}\nTHICKNESS:"
+      - " {thickness}\n"
+      - "DIMENSIONS:"
+      - " {dimensions}\n"
+      - "PIECES :"
+      - " {pieces}\n"
+      - "CUSTOMER: {customer}"
+    weight_object: Quantity
+    barcode_object: BARCODE
+    counter_object: COUNTER
