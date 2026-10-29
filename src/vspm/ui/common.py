@@ -65,6 +65,17 @@ def status_kind(code: str) -> str:
     return ""
 
 
+def session_id() -> str:
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+        ctx = get_script_run_ctx()
+        if ctx is not None:
+            return ctx.session_id
+    except Exception:
+        pass
+    return st.session_state.setdefault("_sid", __import__("uuid").uuid4().hex)
+
+
 def operator() -> str:
     return st.session_state.get("operator") or get_context().settings.effective_operator
 

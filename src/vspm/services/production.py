@@ -120,6 +120,7 @@ class ProductionService:
         self.tz = ZoneInfo(settings.timezone)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.labels_dir = settings.data_path / "labels"
+        self.browser = None  # BrowserPrintService, set by build_context
 
     # ---- helpers ------------------------------------------------------------------
     def _m(self, key: str, **kw) -> str:

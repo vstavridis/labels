@@ -35,6 +35,7 @@ class PrinterMode(str, Enum):
     dymo_web = "dymo_web"
     dymo_com = "dymo_com"
     cups = "cups"
+    browser = "browser"  # printed by the employee's browser on that PC's own DYMO printer
 
 
 class BarcodeMode(str, Enum):
@@ -83,6 +84,12 @@ class Settings(BaseSettings):
     printer_name: str = "DYMO LabelWriter Wireless"
     dymo_web_url: str = "https://127.0.0.1:41951"
     dymo_web_verify_tls: bool = False
+    # "sync": the template's tiny COUNTER object stays and prints the same text as the
+    # barcode; "remove": it is removed from automated labels.
+    dymo_counter_mode: str = "sync"
+    # Browser printing: production labels only from a browser/PC whose TEST0001 print was
+    # confirmed on the Printer page.
+    require_verified_station: bool = True
     cups_options: str = "-o fit-to-page"
     cups_rotate: bool = True
     templates_config: Path = Path("config/templates.yaml")
@@ -115,6 +122,13 @@ class Settings(BaseSettings):
         v = v.strip().lower() or "el"
         if v not in {"el", "en"}:
             raise ValueError("language must be 'el' or 'en'")
+        return v
+
+    @field_validator("dymo_counter_mode")
+    @classmethod
+    def _counter_mode(cls, v: str) -> str:
+        if v not in {"sync", "remove"}:
+            raise ValueError("dymo_counter_mode must be 'sync' or 'remove'")
         return v
 
     @field_validator("excel_material_source")

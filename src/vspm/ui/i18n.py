@@ -10,6 +10,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "nav_review": ("Έλεγχος γραμμών", "Row review"),
     "nav_print": ("Ετικέτα & εκτύπωση", "Label & print"),
     "nav_history": ("Ιστορικό", "History"),
+    "nav_printer": ("Εκτυπωτής DYMO", "DYMO printer"),
     "nav_settings": ("Ρυθμίσεις", "Settings"),
     "language": ("Γλώσσα", "Language"),
     "operator": ("Χειριστής", "Operator"),
@@ -47,6 +48,43 @@ STRINGS: dict[str, tuple[str, str]] = {
     "print_anyway": ("Είναι διαφορετική γραμμή - εκτύπωση παρ' όλα αυτά",
                      "It is a different line - print anyway"),
     "verify": ("Έλεγχος ετικέτας και Excel", "Verify label and Excel record"),
+    "printer_intro": ("Αυτή η σελίδα ελέγχει την υπηρεσία DYMO και τον εκτυπωτή του υπολογιστή στον οποίο είναι "
+                      "ανοιχτός αυτός ο browser. Οι ετικέτες τυπώνονται πάντα στον DYMO αυτού του υπολογιστή.",
+                      "This page checks the DYMO service and printer of the computer this browser runs on. Labels "
+                      "always print on this computer's DYMO."),
+    "this_pc": ("Αυτός ο υπολογιστής", "This computer"),
+    "waiting_browser": ("Αναμονή απάντησης από τον browser…", "Waiting for the browser…"),
+    "dymo_service": ("Υπηρεσία DYMO", "DYMO service"),
+    "printers_found": ("Εκτυπωτές DYMO", "DYMO printers"),
+    "selected_printer": ("Εκτυπωτής", "Printer"),
+    "verified": ("Επιβεβαιωμένος", "Verified"),
+    "details": ("Λεπτομέρειες διάγνωσης", "Diagnostic details"),
+    "station_name": ("Θέση", "Station"),
+    "top_frame": ("Πλαίσιο σελίδας", "Page frame"),
+    "embedded_cross_origin": ("μέσα σε ξένη σελίδα", "embedded in another site"),
+    "embedded_hint": ("Η εφαρμογή εμφανίζεται μέσα σε σελίδα άλλης διεύθυνσης. Αν η υπηρεσία DYMO δεν βρίσκεται, "
+                      "ανοίξτε την εφαρμογή απευθείας από τη δική της διεύθυνση.",
+                      "The app is shown inside a page of another address. If the DYMO service is not found, open "
+                      "the app directly at its own address."),
+    "test_print": ("Δοκιμαστική εκτύπωση TEST0001", "Test print TEST0001"),
+    "test_print_help": ("Τυπώνει ετικέτα με barcode TEST0001 στο επιλεγμένο πρότυπο. Δεν δεσμεύει κανέναν αριθμό, "
+                        "δεν γράφει στο Excel και δεν αλλάζει τους μετρητές DYMO.",
+                        "Prints a label with barcode TEST0001 on the chosen template. It allocates no number, writes "
+                        "nothing to Excel and does not change any DYMO counter."),
+    "print_test": ("Εκτύπωση TEST0001", "Print TEST0001"),
+    "download_test_label": ("Λήψη TEST0001 .label", "Download TEST0001 .label"),
+    "job": ("Εργασία", "Job"),
+    "confirm_test_question": ("Βγήκε η ετικέτα TEST0001 σωστά (ίδια εμφάνιση με τις κανονικές ετικέτες) και ο "
+                              "σαρωτής διαβάζει TEST0001;",
+                              "Did the TEST0001 label come out correctly (same look as normal labels) and does the "
+                              "scanner read TEST0001?"),
+    "test_ok": ("Ναι — σωστή ετικέτα, ο σαρωτής διαβάζει TEST0001", "Yes — correct label, scanner reads TEST0001"),
+    "test_bad": ("Όχι — πρόβλημα", "No — problem"),
+    "station_verified": ("Ο υπολογιστής και ο εκτυπωτής επιβεβαιώθηκαν για εκτύπωση.",
+                         "This computer and printer are verified for printing."),
+    "test_failed_note": ("Καταγράφηκε. Δείτε τον οδηγό αντιμετώπισης προβλημάτων πριν από νέα δοκιμή.",
+                         "Recorded. See the troubleshooting guide before trying again."),
+    "all_stations": ("Όλοι οι υπολογιστές", "All computers"),
     "go_review": ("Μετάβαση στον έλεγχο", "Go to review"),
     "page": ("Σελίδα", "Page"),
     # review

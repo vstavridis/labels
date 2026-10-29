@@ -1,0 +1,13 @@
+{
+  "compilerOptions": {
+    "target": "ES2019",
+    "lib": ["ES2019", "DOM"],
+    "strict": true,
+    "noImplicitReturns": true,
+    "removeComments": false,
+    "outDir": "../static",
+    "rootDir": "src",
+    "newLine": "lf"
+  },
+  "files": ["src/bridge.ts"]
+}

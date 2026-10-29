@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -295,8 +296,11 @@ class LabelTemplate:
         }
 
     # ---- populate ------------------------------------------------------------
-    def populate(self, spec: TemplateSpec, content: LabelContent, number: int) -> str:
-        """Return a new label XML with the given content and barcode number."""
+    def populate(self, spec: TemplateSpec, content: LabelContent, number: int, counter_mode: str = "sync") -> str:
+        """Return a new label XML with the given content and barcode number.
+
+        counter_mode "sync": the template's COUNTER object stays but prints the same
+        text as the barcode; "remove": the COUNTER object is removed."""
         self.check_spec(spec)
         root = copy.deepcopy(self.root)
         values = {
@@ -326,10 +330,92 @@ class LabelTemplate:
 
         counter = self.find(spec.counter_object, root)
         if counter is not None and counter.tag == "CounterObject":
-            # Keep the (tiny) counter object visually consistent with the barcode.
-            counter.find("Current").text = str(number)
-        xml = etree.tostring(root, encoding="utf-8", xml_declaration=True)
-        return xml.decode("utf-8")
+            if counter_mode == "remove":
+                oi = counter.getparent()
+                oi.getparent().remove(oi)
+            else:
+                sync_counter_text(counter, content.barcode, number)
+        xml = etree.tostring(root, encoding="utf-8", xml_declaration=True).decode("utf-8")
+        problems = check_prepared_label(xml, content.barcode)
+        if problems:  # never hand out a label that could print another number
+            raise TemplateError("prepared label failed the safety check: " + "; ".join(problems))
+        return xml
+
+
+def counter_text(counter: etree._Element) -> str:
+    """Text a DYMO CounterObject prints: PreText + Current (zero-padded) + PostText."""
+    cur = (counter.findtext("Current") or "").strip()
+    width = int(counter.findtext("FormatWidth") or 0)
+    zeros = (counter.findtext("UseLeadingZeros") or "").strip().lower() == "true"
+    digits = cur.zfill(width) if zeros and width > len(cur) else cur
+    return (counter.findtext("PreText") or "") + digits + (counter.findtext("PostText") or "")
+
+
+def _set_child(el: etree._Element, tag: str, text: str) -> None:
+    c = el.find(tag)
+    if c is None:
+        c = etree.SubElement(el, tag)
+    c.text = text
+
+
+def sync_counter_text(counter: etree._Element, barcode: str, number: int) -> None:
+    """Make the (small) COUNTER object print exactly the barcode text.
+
+    For production numbers only `Current` changes (prefix/width stay as in the
+    template). For other texts such as TEST0001 the prefix and width are set too.
+    """
+    _set_child(counter, "Current", str(number))
+    if counter_text(counter) == barcode:
+        return
+    m = re.fullmatch(r"(.*?)(\d+)", barcode)
+    if m:
+        _set_child(counter, "PreText", m.group(1))
+        _set_child(counter, "Current", str(int(m.group(2))))
+        _set_child(counter, "FormatWidth", str(len(m.group(2))))
+        _set_child(counter, "UseLeadingZeros", "True")
+        post = counter.find("PostText")
+        if post is not None:
+            post.text = None
+    if counter_text(counter) != barcode:
+        raise TemplateError(f"cannot make the DYMO counter object print '{barcode}'")
+
+
+def check_prepared_label(xml: str, barcode: str) -> list[str]:
+    """Safety check of a prepared label (same rules as the browser bridge).
+
+    The label must print exactly `barcode`: every barcode object carries it, no
+    object is linked to a DYMO COUNTER (DYMO would then substitute its own
+    number), and any remaining counter object prints the same text."""
+    problems: list[str] = []
+    if not re.fullmatch(r"[0-9A-Z\-. $/+%]+", barcode or ""):
+        problems.append("barcode is not valid Code 39 text")
+    try:
+        root = etree.fromstring(xml.encode("utf-8") if isinstance(xml, str) else xml, etree.XMLParser(huge_tree=True))
+    except etree.XMLSyntaxError as e:
+        return [f"label XML cannot be read: {e}"]
+    if root.tag != "DieCutLabel":
+        problems.append("not a DYMO Label v8 (DieCutLabel) file")
+    counters = list(root.iter("CounterObject"))
+    counter_names = {c.findtext("Name") for c in counters}
+    barcodes = list(root.iter("BarcodeObject"))
+    if not barcodes:
+        problems.append("label has no barcode object")
+    for b in barcodes:
+        if (b.findtext("Text") or "") != barcode:
+            problems.append(f"barcode object prints '{b.findtext('Text')}' instead of '{barcode}'")
+        if (b.findtext("LinkedObjectName") or "").strip():
+            problems.append("barcode is linked to another object (DYMO counter)")
+    for link in root.iter("LinkedObjectName"):
+        if (link.text or "").strip() in counter_names:
+            problems.append(f"an object is linked to the DYMO counter '{link.text.strip()}'")
+    for c in counters:
+        if counter_text(c) != barcode:
+            problems.append(f"counter object would print '{counter_text(c)}' instead of '{barcode}'")
+    return problems
+
+
+def xml_sha256(xml: str) -> str:
+    return hashlib.sha256(xml.encode("utf-8")).hexdigest()
 
 
 def format_barcode(prefix: str, number: int, format_width: int = 0, leading_zeros: bool = True) -> str:

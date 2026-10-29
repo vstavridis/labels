@@ -13,7 +13,9 @@ import streamlit as st
 st.set_page_config(page_title="VS Production Manager", page_icon="🏷️", layout="wide")
 
 from vspm.ui.common import CSS, T, get_context, lang  # noqa: E402
-from vspm.ui.views import dashboard, history, label_print, recognition, review, settings_page  # noqa: E402
+from vspm.ui.views import (  # noqa: E402
+    dashboard, history, label_print, printer_page, recognition, review, settings_page,
+)
 
 st.markdown(CSS, unsafe_allow_html=True)
 ctx = get_context()
@@ -42,6 +44,7 @@ pages = [
     st.Page(review.render, title=T("nav_review"), icon="✏️", url_path="review"),
     st.Page(label_print.render, title=T("nav_print"), icon="🖨️", url_path="print"),
     st.Page(history.render, title=T("nav_history"), icon="🗂️", url_path="history"),
+    st.Page(printer_page.render, title=T("nav_printer"), icon="🖨️", url_path="printer"),
     st.Page(settings_page.render, title=T("nav_settings"), icon="⚙️", url_path="settings"),
 ]
 st.session_state["_pages"] = {p.url_path: p for p in pages}

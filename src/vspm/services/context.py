@@ -20,6 +20,7 @@ from vspm.integrations.documents import (
     DocumentSource, GoogleDriveSource, LocalFolderSource, MockSource,
 )
 from vspm.integrations.ocr.providers import AnthropicOcr, MockOcr
+from vspm.services.browser_print import BrowserPrintService
 from vspm.services.customers import CustomerService
 from vspm.services.documents import DocumentService
 from vspm.services.production import ProductionService
@@ -46,6 +47,7 @@ class AppContext:
     registry_client: Optional[RegistryAllocator]
     problems: dict[str, str] = field(default_factory=dict)
     recovery_notes: list[str] = field(default_factory=list)
+    browser: Optional[BrowserPrintService] = None
 
     def ocr_provider(self):
         s = self.settings
@@ -118,6 +120,8 @@ def build_context(s: Settings) -> AppContext:
     try:
         if s.printer_mode == PrinterMode.dymo_web:
             printer = DymoWebServicePrinter(s.dymo_web_url, s.dymo_web_verify_tls)
+        elif s.printer_mode == PrinterMode.browser:
+            printer = MockPrinter(s.data_path / "unused_server_printer")  # never used: the browser prints
         elif s.printer_mode == PrinterMode.cups:
             printer = CupsPrinter(s.cups_options, rotate=s.cups_rotate)
         elif s.printer_mode == PrinterMode.dymo_com:
@@ -153,6 +157,8 @@ def build_context(s: Settings) -> AppContext:
                                    registry_client=registry_client)
     ctx = AppContext(s, db, repo, customers, templates, transforms, allocator, printer, writer, production, documents,
                      registry_client, problems)
+    ctx.browser = BrowserPrintService(db, templates, counter_mode=s.dymo_counter_mode)
+    production.browser = ctx.browser
     try:
         ctx.recovery_notes = production.recover()
     except Exception as e:

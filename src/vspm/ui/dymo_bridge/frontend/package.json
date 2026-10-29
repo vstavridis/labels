@@ -1,0 +1,13 @@
+{
+  "name": "vspm-dymo-bridge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Streamlit component: prints prepared DYMO labels through the DYMO Web Service of the browser's own computer",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "5.9.3"
+  }
+}
