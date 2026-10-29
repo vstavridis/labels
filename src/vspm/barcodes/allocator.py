@@ -59,6 +59,10 @@ class BarcodeAllocator(Protocol):
         """Indicative next barcode (not reserved; another PC may take it first)."""
         ...
 
+    def find_by_ref(self, production_ref: str) -> list[Reservation]:
+        """Reservations made for the same document line (duplicate detection)."""
+        ...
+
 
 def format_number(prefix: str, number: int, width: int) -> str:
     digits = str(number).zfill(width) if width else str(number)
@@ -84,6 +88,9 @@ class DisabledAllocator:
 
     def peek(self, series):
         return None
+
+    def find_by_ref(self, production_ref):
+        return []
 
 
 class LocalRangeAllocator:
@@ -147,6 +154,10 @@ class LocalRangeAllocator:
         self.db.execute("UPDATE local_reservations SET status=? WHERE idempotency_key=?",
                         (status, reservation.idempotency_key))
 
+    def find_by_ref(self, production_ref: str) -> list[Reservation]:
+        return [self._to_res(r) for r in self.db.query(
+            "SELECT * FROM local_reservations WHERE production_ref=? AND mode=?", (production_ref, self.mode))]
+
     def peek(self, series):
         r = self.db.one("SELECT next_value FROM local_sequences WHERE mode=? AND series=?", (self.mode, series))
         return format_number(self.prefixes.get(series, series), r["next_value"], self.widths.get(series, 0)) if r else None
@@ -200,6 +211,10 @@ class RegistryAllocator:
         self._call("POST", f"/v1/reservations/{reservation.reservation_id}/status",
                    json={"status": status, "operator": operator})
 
+    def find_by_ref(self, production_ref: str) -> list[Reservation]:
+        r = self._call("GET", "/v1/reservations", params={"production_ref": production_ref})
+        return [self._res(d) for d in r.json()] if r.status_code == 200 else []
+
     def peek(self, series):
         try:
             for seq in self._call("GET", "/v1/sequences").json():
@@ -215,6 +230,10 @@ class RegistryAllocator:
             return r.status_code == 200, r.text[:200]
         except httpx.HTTPError as e:
             return False, str(e)
+
+    def observe(self, barcodes: list[str], source: str, operator: str, computer: str) -> dict:
+        return self._call("POST", "/v1/observed", json={"items": barcodes, "source": source, "operator": operator,
+                                                        "computer": computer}).json()
 
     # ---- Excel job queue (registry_queue mode) ------------------------------------------
     def enqueue_excel(self, idempotency_key: str, barcode: str, payload: dict) -> dict:

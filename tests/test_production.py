@@ -16,9 +16,9 @@ from tests.conftest import with_settings
 
 
 def make_row(ctx, **kw) -> int:
-    base = dict(document_id=None, row_index=1, customer_full="ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ", customer_short="ΓΚΟΥΝΤΑ",
+    base = dict(document_id=None, row_index=1, customer_full="ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ", customer_short="ΒΗΤΑΚΗΣ",
                 material="ΓΑΛΒΑΝΙΖΕ", thickness="0,60", dimensions="34ΧΡΟΛΟ", weight="496", pieces="4",
-                packages="1", source_barcode="B-101", source_roll="E1830460001", location="7",
+                packages="1", source_barcode="B-101", source_roll="ROLL-T-0001", location="7",
                 template_key=TemplateKey.PG, approved=True, status=RowStatus.approved)
     base.update(kw)
     return ctx.repo.add_row(ProductionRow(**base))
@@ -189,11 +189,11 @@ def test_print_date_uses_factory_timezone(ctx, settings):
 
 
 def test_pg0_row_recorded_as_pg_in_excel(ctx, settings):
-    out = ctx.production.print_and_save(make_row(ctx, customer_full="ΚΥΡΙΑΚΙΔΗΣ", customer_short="ΚΥΡΙΑΚΙΔΗΣ",
+    out = ctx.production.print_and_save(make_row(ctx, customer_full="ΑΛΦΑΔΗΣ", customer_short="ΑΛΦΑΔΗΣ",
                                                  template_key=TemplateKey.PG0))
     assert out.barcode.startswith("PG0")
     ws = openpyxl.load_workbook(settings.excel_path)[DEFAULT_SHEET_NAME]
-    assert ws.cell(5, 7).value == "PG" and ws.cell(5, 8).value == out.barcode and ws.cell(5, 6).value == "ΚΥΡΙΑΚΙΔΗΣ"
+    assert ws.cell(5, 7).value == "PG" and ws.cell(5, 8).value == out.barcode and ws.cell(5, 6).value == "ΑΛΦΑΔΗΣ"
 
 
 def test_printed_row_values_are_locked(ctx):

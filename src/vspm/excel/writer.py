@@ -22,6 +22,7 @@ import hashlib
 import os
 import re
 import sys
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -113,7 +114,9 @@ def payload_to_cells(p: ExcelRowPayload) -> tuple[dict[str, object], dict[str, d
 class SafeWorkbookWriter:
     def __init__(self, path: Path, sheet: str, *, backup_dir: Path, date_format: str = "dd/mm/yyyy",
                  full_calc_on_load: bool = True, block_on_conflict_copies: bool = True,
-                 write_enabled: bool = False, keep_backups: int = 200):
+                 write_enabled: bool = False, keep_backups: int = 200,
+                 replace_retries: int = 6, retry_delay: float = 0.25, replace_func=os.replace,
+                 allowed_root: Optional[Path] = None):
         self.path = Path(path)
         self.sheet = sheet
         self.backup_dir = Path(backup_dir)
@@ -122,8 +125,21 @@ class SafeWorkbookWriter:
         self.block_on_conflict_copies = block_on_conflict_copies
         self.write_enabled = write_enabled
         self.keep_backups = keep_backups
+        self.replace_retries = replace_retries
+        self.retry_delay = retry_delay
+        self._replace = replace_func
+        self.allowed_root = Path(allowed_root).resolve() if allowed_root else None
 
     # ---- environment checks --------------------------------------------------------
+    def is_test_copy(self) -> bool:
+        if self.allowed_root is None:
+            return True
+        try:
+            self.path.resolve().relative_to(self.allowed_root)
+            return True
+        except ValueError:
+            return False
+
     def owner_files(self) -> list[Path]:
         name = self.path.name
         cands = {"~$" + name, "~$" + name[1:], "~$" + name[2:]}
@@ -202,6 +218,10 @@ class SafeWorkbookWriter:
             raise ExcelWritesDisabledError(
                 "Excel writing is disabled (VSPM_EXCEL_WRITE_ENABLED=false). Use staging or enable it after "
                 "completing the test-copy checklist.")
+        if self.allowed_root is not None and not self.is_test_copy():
+            raise ExcelWritesDisabledError(
+                f"Pilot safety: writing is only allowed to a test copy inside {self.allowed_root} "
+                f"(VSPM_EXCEL_REQUIRE_TEST_COPY=true), not to {self.path}. Use `vspm make-test-workbook`.")
         problems = self.preflight()
         if problems:
             exc = WorkbookConflictError if any("conflict" in p for p in problems) else WorkbookLockedError
@@ -255,15 +275,7 @@ class SafeWorkbookWriter:
             raise WorkbookChangedError("The workbook changed while the row was being prepared. Nothing was written; "
                                        "retry.")
         backup = self._backup(original)
-        tmp = self.path.parent / f".vspm-tmp-{uuid.uuid4().hex}{self.path.suffix}"
-        try:
-            tmp.write_bytes(new_bytes)
-            os.replace(tmp, self.path)
-        except PermissionError as e:
-            raise WorkbookLockedError(f"Could not replace the workbook (it is open somewhere?): {e}") from e
-        finally:
-            if tmp.exists():
-                tmp.unlink(missing_ok=True)
+        self._atomic_replace(new_bytes, hash_before)
 
         written = self.read_bytes()
         hash_after = sha256(written)
@@ -272,6 +284,37 @@ class SafeWorkbookWriter:
                                        "after writing - check OneDrive).")
         self._verify(written, to_write)
         return WriteReport(results, hash_before, hash_after, backup)
+
+    def _atomic_replace(self, new_bytes: bytes, hash_before: str) -> None:
+        """Write a temp file next to the workbook and rename it over the workbook.
+
+        On Windows the rename fails while any program holds the file open (Excel,
+        but also briefly OneDrive, antivirus or Explorer's preview). Short-lived
+        locks are retried; before every retry the workbook is checked again so a
+        version saved by someone else in the meantime is never overwritten.
+        """
+        tmp = self.path.parent / f".vspm-tmp-{uuid.uuid4().hex}{self.path.suffix}"
+        try:
+            tmp.write_bytes(new_bytes)
+            for attempt in range(self.replace_retries + 1):
+                try:
+                    self._replace(tmp, self.path)
+                    return
+                except PermissionError as e:
+                    if attempt == self.replace_retries:
+                        raise WorkbookLockedError(
+                            f"Could not replace the workbook after {attempt + 1} attempts - it is open in another "
+                            f"program (Excel, OneDrive sync, antivirus). Nothing was written. ({e})") from e
+                    time.sleep(self.retry_delay * (2 ** attempt))
+                    if sha256(self.read_bytes()) != hash_before:
+                        raise WorkbookChangedError(
+                            "The workbook changed while waiting for it to be released. Nothing was written; retry.")
+        finally:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
 
     def _verify(self, data: bytes, written: list[tuple[int, ExcelRowPayload]]) -> None:
         editor = SheetEditor(XlsxPackage(data), self.sheet)

@@ -38,3 +38,7 @@ reference_files/*
 Thumbs.db
 .idea/
 .vscode/
+
+# Real customer rules (confidential)
+config/customers.yaml
+config/*.local.yaml

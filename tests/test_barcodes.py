@@ -138,3 +138,53 @@ def test_excel_job_queue(api):
     assert api.post("/v1/excel-jobs/claim", json={"worker": "pc2"}, headers=CLIENT).json() == []
     api.post(f"/v1/excel-jobs/{j['id']}/complete", json={"status": "done", "result": {"row_number": 9}}, headers=CLIENT)
     assert api.get("/v1/excel-jobs", params={"idempotency_key": "excel:VS1"}, headers=CLIENT).json()[0]["status"] == "done"
+
+
+# ---- regression tests for the registry audit ---------------------------------------------
+def test_block_request_id_is_matched_exactly_not_as_pattern(api):
+    a = api.post("/v1/blocks", json={"series": "VS", "count": 2, "operator": "anna", "request_id": "req-abc-001"},
+                 headers=CLIENT).json()
+    # "%" / "_" used to be SQL wildcards: this request must NOT receive anna's numbers.
+    b = api.post("/v1/blocks", json={"series": "VS", "count": 2, "operator": "bob", "request_id": "req-abc-%"},
+                 headers=CLIENT).json()
+    c = api.post("/v1/blocks", json={"series": "VS", "count": 2, "operator": "carl", "request_id": "req-abc-00_"},
+                 headers=CLIENT).json()
+    assert len({tuple(a["barcodes"]), tuple(b["barcodes"]), tuple(c["barcodes"])}) == 3
+
+
+def test_block_retry_with_different_parameters_is_refused(api):
+    body = {"series": "VS", "count": 2, "operator": "anna", "request_id": "req-xyz-001"}
+    assert api.post("/v1/blocks", json=body, headers=CLIENT).status_code == 200
+    assert api.post("/v1/blocks", json={**body, "count": 3}, headers=CLIENT).status_code == 409
+    assert api.post("/v1/blocks", json={**body, "series": "PG"}, headers=CLIENT).status_code == 409
+
+
+def test_observed_numbers_advance_sequence_and_report_known(api):
+    issued = api.post("/v1/reservations", json={"series": "VS", "idempotency_key": "app-row-0001"},
+                      headers=CLIENT).json()["barcode"]
+    r = api.post("/v1/observed", json={"items": ["VS11600", "VS11700", issued, "XX1", "vs11701"],
+                                       "source": "workbook"}, headers=CLIENT).json()
+    assert r["recorded"] == ["VS11600", "VS11700", "VS11701"]
+    assert [x["barcode"] for x in r["already_registered"]] == [issued]
+    assert r["ignored"] == ["XX1"]
+    nxt = api.post("/v1/reservations", json={"series": "VS", "idempotency_key": "app-row-0002"}, headers=CLIENT).json()
+    assert nxt["number"] == 11702
+    again = api.post("/v1/observed", json={"items": ["VS11600"], "source": "workbook"}, headers=CLIENT).json()
+    assert again["recorded"] == [] and again["already_registered"][0]["kind"] == "observed"
+
+
+def test_reservations_can_be_found_by_production_ref(api):
+    api.post("/v1/reservations", json={"series": "PG", "idempotency_key": "pc1-row-0001",
+                                       "production_ref": "google:FILE1#row2"}, headers=CLIENT)
+    found = api.get("/v1/reservations", params={"production_ref": "google:FILE1#row2"}, headers=CLIENT).json()
+    assert [f["idempotency_key"] for f in found] == ["pc1-row-0001"]
+
+
+def test_failed_excel_jobs_back_off(api):
+    j = api.post("/v1/excel-jobs", json={"idempotency_key": "excel:VS9", "barcode": "VS9", "payload": {}},
+                 headers=CLIENT).json()
+    assert api.post("/v1/excel-jobs/claim", json={"worker": "pc1"}, headers=CLIENT).json()
+    r = api.post(f"/v1/excel-jobs/{j['id']}/complete", json={"status": "conflict", "result": {}}, headers=CLIENT).json()
+    assert r["attempts"] == 1
+    # not handed out again immediately (it used to be retried on every worker loop)
+    assert api.post("/v1/excel-jobs/claim", json={"worker": "pc1"}, headers=CLIENT).json() == []

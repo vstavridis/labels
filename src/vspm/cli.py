@@ -13,7 +13,14 @@ from typing import Optional
 
 import typer
 
-from vspm.config import PROJECT_ROOT, get_settings
+from vspm.config import get_settings
+
+# Windows consoles/redirects may use a legacy code page; Greek output must not crash.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
 
 app = typer.Typer(help="VS Production Manager utilities", no_args_is_help=True)
 registry = typer.Typer(help="Barcode registry administration")
@@ -105,23 +112,113 @@ def check():
         typer.secho(f"! {k}: {v}", fg="yellow")
 
 
-@app.command("test-print")
-def test_print(template: str = "VS", printer: Optional[str] = None,
-               barcode: str = typer.Option("TEST0001", help="Text printed in the barcode (not allocated)")):
-    """Print a clearly marked TEST label without allocating a number or touching Excel."""
-    from vspm.domain.models import LabelContent, TemplateKey
+@app.command("dymo-test")
+def dymo_test(template: list[str] = typer.Option(["VS", "PG", "PG0", "EX"], help="Template(s) to test"),
+              print_: bool = typer.Option(False, "--print", help="Send the TEST labels to the printer"),
+              barcode: str = typer.Option("TEST0001", help="Fixed barcode text (no number is allocated)")):
+    """DYMO integration test with your ORIGINAL templates, without touching their counters.
+
+    Fills each template with TEST values and a fixed TEST barcode, saves the label files to
+    data/dymo_test/ (open them in DYMO Label v8 to compare) and, with --print, prints them.
+    Verifies with SHA-256 that the original template files are unchanged afterwards."""
     ctx = _ctx()
-    key = TemplateKey(template)
-    spec = ctx.templates.spec(key)
-    content = LabelContent(template_key=key, material="ΔΟΚΙΜΗ / TEST", thickness="0,00", dimensions="TEST",
-                           pieces="0", customer_short="TEST", weight="0", barcode=barcode)
-    xml = ctx.templates.load(key).populate(spec, content, 0)
-    out = ctx.settings.data_path / "test_print.label"
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(xml, encoding="utf-8")
-    res = ctx.printer.print_label(xml, printer or ctx.settings.printer_name)
-    typer.echo(f"Saved {out}. Print result: {res}")
-    typer.echo("Check the physical label: layout, fonts, barcode text and scannability.")
+    out = ctx.settings.data_path / "dymo_test"
+    typer.echo(f"Printer mode: {ctx.settings.printer_mode.value}  printer: {ctx.settings.printer_name}")
+    if print_:
+        ok, msg = ctx.printer.status()
+        typer.echo(f"Printer status: {'OK' if ok else 'PROBLEM'} - {msg}")
+    from vspm.pilot import dymo_template_test
+    failed = False
+    for r in dymo_template_test(ctx, template, print_, out, barcode):
+        state = "not printed" if r.printed is None else ("sent to printer" if r.printed else f"PRINT FAILED: {r.error}")
+        typer.echo(f"{r.key:4s} template counter={r.counter_before}  file={r.label_file}  {state}  "
+                   f"template unchanged: {'YES' if r.unchanged else 'NO'}")
+        failed |= (not r.unchanged) or r.printed is False
+    raise typer.Exit(1 if failed else 0)
+
+
+@app.command("test-print", hidden=True)
+def test_print(template: str = "VS"):
+    """Old name of `dymo-test --print --template X`."""
+    dymo_test(template=[template], print_=True, barcode="TEST0001")
+
+
+@app.command("pilot-dryrun")
+def pilot_dryrun_cmd(workbook: Optional[Path] = typer.Option(None, help="Workbook to COPY (default: VSPM_EXCEL_PATH)"),
+                     synthetic: bool = typer.Option(False, help="Use a generated workbook instead of a copy"),
+                     excel: bool = typer.Option(False, "--excel", help="Also open the copy in Microsoft Excel (Windows)"),
+                     work_dir: Optional[Path] = typer.Option(None, help="Folder for the copies (default: new temp folder)")):
+    """Rehearse the pilot on copies: scan -> rows -> Print & Save -> verify -> reprint.
+
+    Uses the mock scanner, mock AI, mock printer and test barcodes, your real templates
+    (read-only) and a COPY of the workbook. Nothing original is modified."""
+    from vspm.pilot import pilot_dryrun
+    s = get_settings()
+    src = None if synthetic else s.resolve(workbook or s.excel_path)
+    if src is not None and not src.exists():
+        raise typer.BadParameter(f"workbook not found: {src} (use --synthetic or --workbook)")
+    res = pilot_dryrun(s, src, synthetic, work_dir=work_dir, excel_com=excel)
+    for line in res.lines:
+        typer.echo(line)
+    typer.echo(f"\nWorkbook copy with the test row: {res.workbook_copy}")
+    typer.secho("DRY RUN PASSED" if res.ok else "DRY RUN FAILED", fg="green" if res.ok else "red")
+    raise typer.Exit(0 if res.ok else 1)
+
+
+@app.command("verify-label")
+def verify_label_cmd(barcode: str):
+    """After printing: check layout, barcode and that Excel has exactly one matching record."""
+    from vspm.services.verification import verify_label
+    ctx = _ctx()
+    lab = ctx.db.one("SELECT id FROM labels WHERE barcode=?", (barcode.strip().upper(),))
+    if lab is None:
+        raise typer.BadParameter(f"no label {barcode} in this computer's database")
+    rep = verify_label(ctx, lab["id"])
+    typer.echo(rep.text())
+    raise typer.Exit(0 if rep.ok else 1)
+
+
+@app.command("drive-test")
+def drive_test():
+    """List the 5 latest scans from the configured source and download the newest one."""
+    ctx = _ctx()
+    if ctx.documents is None:
+        typer.secho(f"Document source not available: {ctx.problems.get('documents')}", fg="red")
+        raise typer.Exit(1)
+    docs = ctx.documents.source.list_latest(5)
+    typer.echo(f"Source: {ctx.settings.drive_mode.value}  ({len(docs)} documents)")
+    for d in docs:
+        typer.echo(f"  {d.uploaded_at}  {d.mime_type:18s} {d.name}  rev={d.revision[:12]}")
+    if docs:
+        from vspm.integrations.documents import page_images
+        data = ctx.documents.source.download(docs[0])
+        pages = page_images(data, docs[0].mime_type)
+        typer.echo(f"Downloaded {docs[0].name}: {len(data):,} bytes, {len(pages)} page(s), first page {pages[0].size}")
+    raise typer.Exit(0 if docs else 1)
+
+
+@app.command("ocr-test")
+def ocr_test(file: Path, save: Optional[Path] = typer.Option(None, help="Save the raw AI result as JSON")):
+    """Read one local scan (PDF/JPG/PNG) with the configured AI provider and show the rows.
+
+    Sends the document to the AI provider only if VSPM_OCR_UPLOAD_CONSENT=true."""
+    import mimetypes
+    from vspm.integrations.ocr.base import OcrInput
+    from vspm.integrations.ocr.postprocess import rows_from_extraction
+    ctx = _ctx()
+    mime = mimetypes.guess_type(file.name)[0] or "application/octet-stream"
+    out = ctx.ocr_provider().extract(OcrInput(file.read_bytes(), mime, file.name))
+    if save:
+        save.write_text(out.raw_json, encoding="utf-8")
+    rows = rows_from_extraction(out.document, ctx.customers)
+    typer.echo(f"{out.provider}/{out.model}: {len(rows)} row(s), pages={out.document.page_count}")
+    for w in out.document.warnings:
+        typer.secho(f"  warning: {w}", fg="yellow")
+    for r in rows:
+        flags = ", ".join(k for k, v in r.flags.items() if v == "uncertain")
+        typer.echo(f"  #{r.row_index}: {r.customer_full} | {r.material} | {r.thickness} | {r.dimensions} | "
+                   f"{r.weight} kg | {r.pieces} τεμ | δέματα {r.packages} | ρολό {r.source_roll} | "
+                   f"{r.template_key.value if r.template_key else '-'}" + (f"  ⚠ {flags}" if flags else ""))
 
 
 @app.command("suggest-customers")
@@ -190,6 +287,35 @@ def registry_status():
     s = get_settings()
     r = httpx.get(f"{s.registry_url.rstrip('/')}/v1/sequences", headers={"X-API-Key": s.registry_api_key}, timeout=15)
     typer.echo(json.dumps(r.json(), indent=2, ensure_ascii=False))
+
+
+@registry.command("observe")
+def registry_observe(barcodes: list[str], source: str = typer.Option("manual", help="Where these were printed"),
+                     operator: Optional[str] = None):
+    """Report barcodes printed manually in DYMO WITHOUT a block reservation.
+
+    The registry records them and moves its counter past them. Any number listed under
+    'already registered' was ALSO issued by the registry: that is a duplicate."""
+    s = get_settings()
+    from vspm.barcodes.allocator import RegistryAllocator
+    res = RegistryAllocator(s.registry_url, s.registry_api_key).observe(barcodes, source, operator or s.effective_operator,
+                                                                         s.effective_computer_name)
+    typer.echo(json.dumps(res, indent=2, ensure_ascii=False))
+
+
+@registry.command("observe-workbook")
+def registry_observe_workbook(workbook: Path = typer.Option(..., help="A COPY of the workbook (read-only use)")):
+    """Teach the registry every barcode already in the workbook (column H), so it never issues them."""
+    from vspm.barcodes.allocator import RegistryAllocator
+    from vspm.excel.xlsx_package import SheetEditor, XlsxPackage
+    s = get_settings()
+    ed = SheetEditor(XlsxPackage(s.resolve(workbook).read_bytes()), s.excel_sheet)
+    codes = sorted({str(v).strip() for r, v in ed.column_values("H").items() if r > 1})
+    res = RegistryAllocator(s.registry_url, s.registry_api_key).observe(codes, "workbook", s.effective_operator,
+                                                                         s.effective_computer_name)
+    typer.echo(f"{len(codes)} barcodes sent: {len(res['recorded'])} recorded, "
+               f"{len(res['already_registered'])} already registered, {len(res['ignored'])} not recognised")
+    typer.echo(f"sequences advanced: {res['advanced']}")
 
 
 @registry.command("serve")

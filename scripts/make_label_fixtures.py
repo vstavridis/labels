@@ -17,13 +17,6 @@ from lxml import etree
 
 TINY_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAwS2OUAAAAABJRU5ErkJggg==")
 
-NAMES = {
-    "ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1.label": "VS.label",
-    "ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1(1).label": "VS.label",
-    "ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-1.label": "PG.label",
-    "ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-2.label": "PG0.label",
-    "ΕΤΙΚΕΤΑ ΕΞΑΓΩΓΕΣ.label": "EX.label",
-}
 
 
 def sanitize(data: bytes) -> bytes:
@@ -41,12 +34,16 @@ def sanitize(data: bytes) -> bytes:
 
 
 def main(src: Path, dst: Path) -> None:
+    """Writes VS.label, PG.label, PG0.label, EX.label, recognised by COUNTER prefix."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+    from vspm.dymo.template import counter_prefix_of
+
     dst.mkdir(parents=True, exist_ok=True)
-    for name, out in NAMES.items():
-        p = src / name
-        if p.exists():
-            (dst / out).write_bytes(sanitize(p.read_bytes()))
-            print(f"{name} -> {dst / out}")
+    for p in sorted(src.glob("*.label")):
+        prefix = counter_prefix_of(p)
+        if prefix in ("VS", "PG", "PG0", "EX"):
+            (dst / f"{prefix}.label").write_bytes(sanitize(p.read_bytes()))
+            print(f"{prefix} template -> {dst / (prefix + '.label')}")
 
 
 if __name__ == "__main__":

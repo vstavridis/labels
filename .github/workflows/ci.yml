@@ -2,20 +2,85 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
+
 jobs:
   test:
+    name: tests (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.12"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.12"
       - run: python -m pip install --upgrade pip
-      - run: pip install -e ".[dev,ai]"
+      - run: pip install -e ".[dev,ai,google]"
       # Reference files are confidential and not in the repository, so the
-      # real-file tests are skipped here; run them locally (see docs/TESTING.md).
-      - run: python -m pytest -q
+      # real-file tests are skipped here; run them locally (docs/TESTING.md).
+      - run: python -m pytest -q -rs
+
+  registry-postgres:
+    name: barcode registry on PostgreSQL
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vspm_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      VSPM_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vspm_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev,registry]"
+      - run: python -m pytest -q tests/test_registry_postgres.py tests/test_barcodes.py -rs
+
+  windows-install:
+    name: Windows installation and launch
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      # The confidential templates are not in the repository: use the sanitized fixtures.
+      VSPM_TEMPLATE_DIR: tests/fixtures/labels
+      VSPM_PRINTER_MODE: mock
+      VSPM_DRIVE_MODE: mock
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Run the Windows setup script (as an employee would)
+        run: powershell -ExecutionPolicy Bypass -File scripts\setup_windows.ps1
+      - name: vspm check
+        run: .\.venv\Scripts\vspm.exe check
+      - name: DYMO template test (mock printer, templates must stay unchanged)
+        run: .\.venv\Scripts\vspm.exe dymo-test --print
+      - name: Pilot dry run (synthetic workbook)
+        run: .\.venv\Scripts\vspm.exe pilot-dryrun --synthetic
+      - name: Start the app with start_vspm.bat and check it serves pages
+        run: |
+          $p = Start-Process -FilePath "cmd.exe" -ArgumentList "/c", "scripts\start_vspm.bat" -PassThru -WindowStyle Hidden
+          $ok = $false
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 2
+            try {
+              $r = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing -TimeoutSec 3
+              if ($r.StatusCode -eq 200) { $ok = $true; break }
+            } catch { }
+          }
+          $page = Invoke-WebRequest -Uri "http://localhost:8501/" -UseBasicParsing
+          Write-Host "health ok: $ok  page status: $($page.StatusCode)"
+          taskkill /PID $p.Id /T /F | Out-Null
+          if (-not $ok) { throw "Streamlit did not start" }

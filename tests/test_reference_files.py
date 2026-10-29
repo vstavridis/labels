@@ -49,8 +49,8 @@ def test_write_to_copy_of_real_workbook(tmp_path):
     original_hash = sha(WORKBOOK)
     copy = tmp_path / "Σχισμενα.xlsx"
     shutil.copyfile(WORKBOOK, copy)
-    before = zipfile.ZipFile(copy)
-    parts = {n: before.read(n) for n in before.namelist()}
+    with zipfile.ZipFile(copy) as before:
+        parts = {n: before.read(n) for n in before.namelist()}
     w = SafeWorkbookWriter(copy, DEFAULT_SHEET_NAME, backup_dir=tmp_path / "bk", write_enabled=True)
     last = SheetEditor(XlsxPackage(copy.read_bytes()), DEFAULT_SHEET_NAME).last_data_row()
     p = ExcelRowPayload(material="ΓΑΛΒΑΝΙΖΕ", thickness="0.60", dimensions="34ΧΡΟΛΟ", pieces="4", weight="496",
@@ -58,8 +58,8 @@ def test_write_to_copy_of_real_workbook(tmp_path):
                         print_date="2026-10-21")
     rep = w.append([p])
     assert rep.results[0].row_number == last + 1
-    after = zipfile.ZipFile(copy)
-    changed = {n for n in parts if after.read(n) != parts[n]}
+    with zipfile.ZipFile(copy) as after:
+        changed = {n for n in parts if after.read(n) != parts[n]}
     assert changed <= {"xl/workbook.xml", "xl/styles.xml", "xl/worksheets/sheet6.xml"}
     ed = SheetEditor(XlsxPackage(copy.read_bytes()), DEFAULT_SHEET_NAME)
     r = last + 1

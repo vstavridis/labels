@@ -1,0 +1,32 @@
+# Example customer rules. Copy to config/customers.yaml (git-ignored) and put
+# your real customers there - customer names must not be committed to git.
+# The first time the app starts it imports config/customers.yaml into its local
+# database; afterwards edit the rules on the Settings page.
+#
+# Lower priority numbers are evaluated first. The first matching rule that
+# names a template decides the label type; the first matching rule with a
+# short_name decides the name printed on the label / written to Excel.
+#
+# match: exact | contains | regex  (comparison ignores case, accents,
+#        punctuation and Greek/Latin look-alike letters)
+#
+# The project brief defines two rules (fill in the real names locally):
+#   <the PG0 customer>            -> PG0  (Excel category PG)
+#   <the PG customer "X - Y">     -> PG, short name X
+# `vspm suggest-customers --workbook <copy of the workbook>` lists the
+# customer -> category history to help write more rules.
+
+rules:
+  - priority: 10
+    match: exact
+    pattern: "ΠΕΛΑΤΗΣ ΠΑΡΑΔΕΙΓΜΑ PG0"
+    template: PG0
+    short_name: "ΠΑΡΑΔΕΙΓΜΑ PG0"
+    notes: "Replace with the PG0 customer from the brief"
+
+  - priority: 20
+    match: exact
+    pattern: "ΠΑΡΑΔΕΙΓΜΑ - ΠΕΛΑΤΗΣ PG"
+    template: PG
+    short_name: "ΠΑΡΑΔΕΙΓΜΑ"
+    notes: "Replace with the PG customer from the brief"

@@ -53,7 +53,7 @@ class ExcelMode(str, Enum):
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=str(PROJECT_ROOT / ".env"),
-        env_file_encoding="utf-8",
+        env_file_encoding="utf-8-sig",  # tolerate the BOM some Windows editors add
         env_prefix="VSPM_",
         extra="ignore",
     )
@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     cups_rotate: bool = True
     templates_config: Path = Path("config/templates.yaml")
     template_dir: Path = Path("reference_files")
+    template_files: str = ""  # optional "VS=file.label;PG=file.label" when several files share a prefix
 
     barcode_mode: BarcodeMode = BarcodeMode.disabled
     registry_url: str = "http://localhost:8765"
@@ -101,6 +102,9 @@ class Settings(BaseSettings):
     excel_material_source: str = "canonical"
     excel_full_calc_on_load: bool = True
     excel_block_on_conflict_copies: bool = True
+    # Pilot safety net: while true, the app writes ONLY to workbooks inside the
+    # data folder (e.g. data/test_workbook/). Set to false only at go-live.
+    excel_require_test_copy: bool = True
 
     customers_config: Path = Path("config/customers.yaml")
     materials_config: Path = Path("config/materials.yaml")
@@ -146,6 +150,16 @@ class Settings(BaseSettings):
     @property
     def effective_operator(self) -> str:
         return self.operator_name or "operator"
+
+    def synced_folder_warning(self) -> str | None:
+        """Local state must not live in a cloud-synced folder (SQLite corruption risk)."""
+        markers = ("onedrive", "dropbox", "google drive", "googledrive", "icloud")
+        path = str(self.data_path).lower()
+        if any(m in path for m in markers):
+            return (f"The data folder {self.data_path} is inside a cloud-synced folder. The local database can be "
+                    "damaged by synchronisation. Install the app in a local folder such as C:\\VSPM (or set "
+                    "VSPM_DATA_DIR to one).")
+        return None
 
     def parsed_pilot_ranges(self) -> dict[str, tuple[int, int]]:
         """Parse `VS:900000-900999,PG:...` into {series: (start, end)}."""

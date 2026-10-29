@@ -57,17 +57,18 @@ class AnthropicOcr:
         a = self._anthropic
         kwargs = dict(
             model=self.model,
-            max_tokens=16000,
+            max_tokens=64000,  # adaptive thinking counts toward this; streaming avoids HTTP timeouts
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": self._content(doc)}],
-            output_format=ExtractedDocument,
-            output_config={"effort": self.effort},
+            output_config={"effort": self.effort, "format": extraction_output_format()},
         )
         try:
             if self.server_fallbacks:
-                resp = self.client.beta.messages.parse(betas=[self.FALLBACK_BETA], fallbacks="default", **kwargs)
+                stream = self.client.beta.messages.stream(betas=[self.FALLBACK_BETA], fallbacks="default", **kwargs)
             else:
-                resp = self.client.messages.parse(**kwargs)
+                stream = self.client.messages.stream(**kwargs)
+            with stream as s:
+                resp = s.get_final_message()
         except a.AuthenticationError as e:
             raise OcrError("AI provider rejected the API key (ANTHROPIC_API_KEY)") from e
         except a.RateLimitError as e:
@@ -82,10 +83,35 @@ class AnthropicOcr:
             raise OcrError("The AI provider declined to process this document")
         if resp.stop_reason == "max_tokens":
             raise OcrError("The AI response was cut off (document too long); split the document and retry")
-        parsed: Optional[ExtractedDocument] = getattr(resp, "parsed_output", None)
-        if parsed is None:
-            raise OcrError("The AI response could not be validated against the expected structure")
+        text = "".join(getattr(b, "text", "") for b in resp.content if getattr(b, "type", "") == "text")
+        try:
+            parsed = ExtractedDocument.model_validate_json(text)
+        except ValueError as e:
+            raise OcrError(f"The AI response did not match the expected structure: {e}") from e
         return OcrOutput(parsed, self.name, self.model, parsed.model_dump_json())
+
+
+def extraction_output_format() -> dict:
+    """JSON schema sent to the API: the SDK's strict transform of ExtractedDocument with
+    EVERY property required, so the model must state each field explicitly (null +
+    uncertain when unreadable) instead of omitting it."""
+    from anthropic.lib._parse._transform import transform_schema  # SDK helper used by messages.parse
+
+    schema = transform_schema(ExtractedDocument)
+
+    def require_all(node):
+        if isinstance(node, dict):
+            if node.get("type") == "object" and "properties" in node:
+                node["required"] = list(node["properties"])
+                node["additionalProperties"] = False
+            for v in node.values():
+                require_all(v)
+        elif isinstance(node, list):
+            for v in node:
+                require_all(v)
+
+    require_all(schema)
+    return {"type": "json_schema", "schema": schema}
 
 
 class MockOcr:
@@ -112,10 +138,10 @@ def _v(raw, conf=0.97, uncertain=False, ditto=False, note=None):
 
 # Matches the synthetic mock scan (three rows, header values, one ditto mark).
 DEMO_EXTRACTION = {
-    "customer": _v("ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ"),
+    "customer": _v("ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ"),
     "material": _v("ΓΑΛΒΑΝΙΖΕ"),
     "thickness": _v("0,60"),
-    "source_roll": _v("E1830460001", 0.8, True, note="E or Ε? first character"),
+    "source_roll": _v("ROLL-T-0001", 0.8, True, note="E or Ε? first character"),
     "location": _v("7"),
     "document_date": _v("21/10/2026"),
     "dimensions": _v(None, 0.0),

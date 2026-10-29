@@ -5,7 +5,7 @@ from __future__ import annotations
 import streamlit as st
 
 from vspm.domain.models import LabelContent
-from vspm.services.production import AlreadyPrinted, ProductionError, ValidationFailed
+from vspm.services.production import AlreadyPrinted, PossibleDuplicate, ProductionError, ValidationFailed
 from vspm.ui.common import S, T, badge, flash, get_context, operator, show_flash, status_kind
 from vspm.ui.views.recognition import doc_selector
 
@@ -58,7 +58,7 @@ def render() -> None:
             "BARCODE": barcode_text,
             "ΗΜΕΡ/ΩΡΑ": ctx.production.now_local().strftime("%d/%m/%Y %H:%M"),
         }
-        st.dataframe([{"": k, " ": v} for k, v in info.items()], hide_index=True, use_container_width=True)
+        st.dataframe([{"": k, " ": v} for k, v in info.items()], hide_index=True, width="stretch")
         ps = label["print_status"] if label else "not_printed"
         es = label["excel_status"] if label else "not_queued"
         st.markdown(f"{T('print_status')}: " + badge(S(ps), status_kind(ps)) + "  " + f"{T('excel_status')}: "
@@ -70,11 +70,21 @@ def render() -> None:
             errors = ctx.production.check_printable(row)
             if errors:
                 st.warning(T("not_printable") + "\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in errors.items()))
-            if st.button("🖨️ " + T("print_save"), type="primary", use_container_width=True, disabled=bool(errors)):
+            dup = st.session_state.get("possible_duplicate")
+            allow_dup = False
+            if dup and dup.get("row_id") == row_id:
+                st.error(T("possible_duplicate", e=dup["msg"]))
+                allow_dup = st.checkbox(T("print_anyway"), key=f"dup_ok_{row_id}")
+            if st.button("🖨️ " + T("print_save"), type="primary", width="stretch",
+                         disabled=bool(errors) or (bool(dup) and dup.get("row_id") == row_id and not allow_dup)):
                 try:
-                    out = ctx.production.print_and_save(row_id, operator=operator())
+                    out = ctx.production.print_and_save(row_id, operator=operator(),
+                                                        allow_possible_duplicate=allow_dup)
+                    st.session_state.pop("possible_duplicate", None)
                     for m in out.messages:
                         flash("success" if out.print_ok else "error", f"{out.barcode}: {m}")
+                except PossibleDuplicate as e:
+                    st.session_state["possible_duplicate"] = {"row_id": row_id, "msg": str(e)}
                 except ValidationFailed as e:
                     flash("error", str(e))
                 except (ProductionError, AlreadyPrinted) as e:
@@ -83,29 +93,35 @@ def render() -> None:
         else:
             if label["print_status"] in ("barcode_reserved", "error"):
                 if st.button("🖨️ " + T("print_save") + f" ({label['barcode']})", type="primary",
-                             use_container_width=True):
-                    out = ctx.production.print_and_save(row_id, operator=operator())
-                    for m in out.messages:
-                        flash("success" if out.print_ok else "error", f"{out.barcode}: {m}")
+                             width="stretch"):
+                    try:
+                        out = ctx.production.print_and_save(row_id, operator=operator())
+                        for m in out.messages:
+                            flash("success" if out.print_ok else "error", f"{out.barcode}: {m}")
+                    except ProductionError as e:
+                        flash("error", str(e))
                     st.rerun()
             if label["first_printed_at"]:
                 c1, c2 = st.columns(2)
-                if c1.button("✅ " + T("confirm_ok"), use_container_width=True,
+                if c1.button("✅ " + T("confirm_ok"), width="stretch",
                              disabled=label["print_status"] == "printed_confirmed"):
                     ctx.production.confirm_print(label["id"], True, operator())
                     st.rerun()
-                if c2.button("❌ " + T("confirm_bad"), use_container_width=True):
+                if c2.button("❌ " + T("confirm_bad"), width="stretch"):
                     ctx.production.confirm_print(label["id"], False, operator())
                     flash("warning", "OK - χρησιμοποιήστε «Επανεκτύπωση» (ίδιο barcode)."
                           if st.session_state["lang"] == "el" else "OK - use Reprint (same barcode).")
                     st.rerun()
-                if st.button("🔁 " + T("reprint") + f" ({label['barcode']})", use_container_width=True):
-                    out = ctx.production.reprint(label["id"], operator=operator())
-                    for m in out.messages:
-                        flash("success" if out.print_ok else "error", m)
+                if st.button("🔁 " + T("reprint") + f" ({label['barcode']})", width="stretch"):
+                    try:
+                        out = ctx.production.reprint(label["id"], operator=operator())
+                        for m in out.messages:
+                            flash("success" if out.print_ok else "error", m)
+                    except ProductionError as e:
+                        flash("error", str(e))
                     st.rerun()
             if label["excel_status"] in ("pending", "staged", "error", "conflict"):
-                if st.button("📗 " + T("retry_excel"), use_container_width=True):
+                if st.button("📗 " + T("retry_excel"), width="stretch"):
                     if label["excel_status"] == "staged":
                         res = ctx.production.apply_staged([label["id"]], operator())
                         msgs = res.get(label["id"], [])
@@ -118,9 +134,17 @@ def render() -> None:
         try:
             png, _, _ = ctx.production.preview(row)
             st.image(png, caption=T("preview") + (" (DYMO)" if ctx.settings.printer_mode.value == "dymo_web" else ""),
-                     use_container_width=True)
+                     width="stretch")
         except Exception as e:
             st.warning(f"{T('preview')}: {e}")
+        if label and label["first_printed_at"]:
+            if st.button("🔎 " + T("verify"), width="stretch"):
+                from vspm.services.verification import verify_label
+                rep = verify_label(ctx, label["id"])
+                (st.success if rep.ok else st.error)(rep.text().splitlines()[0])
+                for c in rep.checks:
+                    icon = {True: "✅", False: "❌", None: "➖"}[c.ok]
+                    st.markdown(f"{icon} **{c.name}** — {c.detail}")
         if label:
             with st.expander(T("attempts")):
                 st.dataframe([dict(a) for a in ctx.repo.print_attempts(label["id"])], hide_index=True)

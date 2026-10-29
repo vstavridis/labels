@@ -16,6 +16,10 @@ from vspm.integrations.ocr.postprocess import rows_from_extraction
 from vspm.services.customers import CustomerService
 
 
+class RereadBlocked(Exception):
+    """Re-reading a document that already has printed labels needs confirmation."""
+
+
 @dataclass
 class ListedDocument:
     doc_id: int
@@ -63,7 +67,12 @@ class DocumentService:
                                       status=DocumentStatus.downloaded.value if d["status"] == "new" else d["status"])
         return path.read_bytes(), d["mime_type"]
 
-    def run_ocr(self, doc_id: int, provider: OcrProvider) -> list[ProductionRow]:
+    def run_ocr(self, doc_id: int, provider: OcrProvider, keep_printed: bool = False) -> list[ProductionRow]:
+        printed = self.repo.printed_row_count(doc_id)
+        if printed and not keep_printed:
+            raise RereadBlocked(
+                f"{printed} row(s) of this document already have printed labels. Re-reading replaces only the "
+                "unprinted rows; rows with the same number as a printed row are skipped. Confirm to continue.")
         data, mime = self.content(doc_id)
         d = self.repo.get_document(doc_id)
         try:

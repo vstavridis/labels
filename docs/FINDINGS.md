@@ -1,7 +1,8 @@
 # Reference files: what is actually there, and where it differs from the brief
 
 Full machine-generated details: [REFERENCE_REPORT.md](REFERENCE_REPORT.md) (`vspm report`).
-Customer names and the OneDrive account id are redacted from both documents.
+Customer names, template file names and the OneDrive account id are redacted from both documents
+(the repository is public).
 
 ## 1. Files received
 
@@ -9,9 +10,9 @@ Customer names and the OneDrive account id are redacted from both documents.
 |---|---|---|
 | `Σχισμενα.xlsx` | ✅ | 3.3 MB, 7 worksheets |
 | `ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1.label` (VS) | ❌ | only the copy below was provided |
-| `ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1(1).label` (VS copy) | ✅ | used as the VS template (config accepts either name) |
-| `ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-1.label` (PG) | ✅ | |
-| `ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-2.label` (PG0) | ✅ | |
+| `ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1(1).label` (VS copy) | ✅ | used as the VS template (templates are recognised by their counter prefix) |
+| PG template (`…-1.label`) | ✅ | |
+| PG0 template (`…-2.label`) | ✅ | |
 | `ΕΤΙΚΕΤΑ ΕΞΑΓΩΓΕΣ.label` (EX) | ✅ | |
 | Sample handwritten scans | ❌ | none provided — AI extraction is implemented and tested with mocked AI responses only |
 
@@ -65,9 +66,9 @@ All four are DYMO Label v8 `DieCutLabel` XML, paper **30323 Shipping**, landscap
 
 | Template | Counter prefix | Start | **Current** | Width | Specifics |
 |---|---|---|---|---|---|
-| VS (ΚΟΜΜΕΝΑ-1(1)) | `VS` | 202 | **11546** | 3 | logo images (4), `VSTAVRIDIS.GR` text |
-| PG (ΠΑΓΟΥΝΗ-1) | `PG` | 100 | **7029** | 3 | company-name Address object, image, website text |
-| PG0 (ΠΑΓΟΥΝΗ-2) | `PG0` | 0 | **2278** | 3 | **no ΠΕΛΑΤΗΣ line**, no images/website text, 14 pt text |
+| VS (the "(1)" copy) | `VS` | 202 | **11546** | 3 | logo images (4), `VSTAVRIDIS.GR` text |
+| PG | `PG` | 100 | **7029** | 3 | company-name Address object, image, website text |
+| PG0 | `PG0` | 0 | **2278** | 3 | **no ΠΕΛΑΤΗΣ line**, no images/website text, 14 pt text |
 | EX (ΕΞΑΓΩΓΕΣ) | `EX` | 365 | **3416** | 3 | **English** labels: WEIGHT, THICKNESS, DIMENSIONS, PIECES, CUSTOMER |
 
 * The barcode sample text equals the counter's `Current` value, i.e. DYMO prints `Current` next and then
@@ -88,13 +89,13 @@ All four are DYMO Label v8 `DieCutLabel` XML, paper **30323 Shipping**, landscap
    EX rows in the workbook have the Greek material (`ΓΑΛΒΑΝΙΖΕ`). The brief says column A = material shown on the
    label. The app follows the **existing workbook convention (Greek)** by default; set
    `VSPM_EXCEL_MATERIAL_SOURCE=label` to write the English label text instead.
-3. **PG is used for many customers**, not only `ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ` (e.g. customers whose stock belongs to
-   ΠΑΓΟΥΝΗ, plus some Latin-named customers). EX rows also include Greek-named entries and VS rows include
+3. **PG is used for many customers**, not only the PG customer named in the brief (e.g. customers linked to
+   the same partner, plus some Latin-named customers). EX rows also include Greek-named entries and VS rows include
    Latin-named customers. Rules are therefore data-driven; only the two rules in the brief are seeded, Latin
    names are only *suggested* as EX with confirmation. Use `vspm suggest-customers` to review history.
 4. **English material names**: only `GALVANIZED` is established. Other materials on EX labels must be typed by
    the operator (or added to `config/materials.yaml`) — the app does not guess translations.
 5. **Dimension notation** (`34ΧL` vs `34ΧΡΟΛΟ`, Greek Χ vs Latin X) is not consistent in the samples; the app
    prints what the operator approves. Optional rewrite rules exist in `config/materials.yaml` (disabled).
-6. **Short customer names**: only `ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ → ΓΚΟΥΝΤΑ` is established. For other customers the app
+6. **Short customer names**: only the brief's PG example (`X - Y → X`) is established. For other customers the app
    proposes the full name as written and flags it, rather than inventing an abbreviation.

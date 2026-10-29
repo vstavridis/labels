@@ -88,7 +88,7 @@ def render() -> None:
             "template": r.template_key.value if r.template_key else None, "short_name": r.short_name,
             "confirm": r.requires_confirmation, "active": r.active, "notes": r.notes} for r in rules],
             columns=["id", "priority", "match", "pattern", "template", "short_name", "confirm", "active", "notes"])
-        edited = st.data_editor(df, num_rows="dynamic", hide_index=True, use_container_width=True, column_config={
+        edited = st.data_editor(df, num_rows="dynamic", hide_index=True, width="stretch", column_config={
             "id": None,
             "match": st.column_config.SelectboxColumn(options=["exact", "contains", "regex"]),
             "template": st.column_config.SelectboxColumn(options=[k.value for k in TemplateKey]),
@@ -153,4 +153,4 @@ def render() -> None:
             st.code("\n".join(reversed(lines)), language="json")
         st.dataframe([dict(r) for r in ctx.db.query(
             "SELECT ts, actor, computer, entity, entity_id, action, details_json FROM audit_log ORDER BY id DESC "
-            "LIMIT 300")], hide_index=True, use_container_width=True)
+            "LIMIT 300")], hide_index=True, width="stretch")

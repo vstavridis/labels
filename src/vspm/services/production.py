@@ -22,7 +22,7 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 from zoneinfo import ZoneInfo
@@ -75,6 +75,22 @@ class ValidationFailed(ProductionError):
 
 class AlreadyPrinted(ProductionError):
     pass
+
+
+class PossibleDuplicate(ProductionError):
+    """The same document line seems to have a label already (this or another computer)."""
+
+    def __init__(self, barcodes: list[str], ref: str):
+        super().__init__(f"line {ref} already has label(s) {', '.join(barcodes)}")
+        self.barcodes = barcodes
+        self.ref = ref
+
+
+class PrintInProgress(ProductionError):
+    pass
+
+
+PRINT_LOCK_SECONDS = 120
 
 
 @dataclass
@@ -162,7 +178,32 @@ class ProductionService:
         return png, xml, content
 
     # ---- Print & Save ---------------------------------------------------------------
-    def print_and_save(self, row_id: int, operator: Optional[str] = None) -> Outcome:
+    def production_ref(self, row: ProductionRow) -> str:
+        """Identity of the paper line: same scan + same row number = same production line,
+        on every computer."""
+        doc = self.repo.get_document(row.document_id) if row.document_id else None
+        if doc is None:
+            return f"local:{self.install_id()}:row{row.id}"
+        return f"{doc['source']}:{doc['source_file_id']}#row{row.row_index}"
+
+    def find_duplicates(self, row: ProductionRow) -> list[str]:
+        """Barcodes already issued for the same document line (excluding this row's own)."""
+        ref = self.production_ref(row)
+        own_key = self.barcode_key(row.id)
+        found = [r["barcode"] for r in self.db.query(
+            "SELECT barcode FROM labels WHERE production_ref=? AND production_row_id<>?", (ref, row.id))]
+        finder = getattr(self.allocator, "find_by_ref", None)
+        if finder is not None:
+            try:
+                for res in finder(ref):
+                    if res.idempotency_key != own_key and res.status != "void" and res.barcode not in found:
+                        found.append(res.barcode)
+            except BarcodeError as e:
+                log.warning("duplicate check against registry failed: %s", e)
+        return found
+
+    def print_and_save(self, row_id: int, operator: Optional[str] = None,
+                       allow_possible_duplicate: bool = False) -> Outcome:
         op, pc = self._who(operator)
         row = self.repo.get_row(row_id)
         if row is None:
@@ -177,11 +218,16 @@ class ProductionService:
             errors = self.check_printable(row)
             if errors:
                 raise ValidationFailed(errors)
+            dupes = self.find_duplicates(row)
+            if dupes and not allow_possible_duplicate:
+                raise PossibleDuplicate(dupes, self.production_ref(row))
+            if dupes:
+                self.db.audit("row", row.id, "possible_duplicate_overridden", {"barcodes": dupes}, op, pc)
             spec = self.templates.spec(row.template_key)
             tpl = self.templates.load(row.template_key)
             res = self._reserve(row, spec.barcode_prefix, op, pc)
             content = build_label_content(row, spec, self.transforms, res.barcode)
-            label_id = self._create_label(row, res, content, op, pc)
+            label_id = self._create_label(row, res, content, op, pc, template_sha256=tpl.sha256)
             label = self.repo.get_label(label_id)
         # Resume (or first attempt) of printing with the reserved number.
         return self._print(label, kind="initial", operator=op)
@@ -189,8 +235,8 @@ class ProductionService:
     def _reserve(self, row: ProductionRow, series: str, op: str, pc: str) -> Reservation:
         key = self.barcode_key(row.id)
         try:
-            res = self.allocator.reserve(series, key, production_ref=f"row:{row.id};doc:{row.document_id}",
-                                         operator=op, computer=pc)
+            res = self.allocator.reserve(series, key, production_ref=self.production_ref(row), operator=op,
+                                         computer=pc)
         except BarcodeError as e:
             self.db.audit("row", row.id, "barcode_reservation_failed", {"error": str(e)}, op, pc)
             raise ProductionError(str(e)) from e
@@ -198,7 +244,8 @@ class ProductionService:
             raise ProductionError(f"Registry returned series {res.series}, expected {series}")
         return res
 
-    def _create_label(self, row: ProductionRow, res: Reservation, content: LabelContent, op: str, pc: str) -> int:
+    def _create_label(self, row: ProductionRow, res: Reservation, content: LabelContent, op: str, pc: str,
+                      template_sha256: Optional[str] = None) -> int:
         now = utcnow()
         with self.db.transaction() as conn:
             existing = conn.execute("SELECT id FROM labels WHERE production_row_id=?", (row.id,)).fetchone()
@@ -207,10 +254,10 @@ class ProductionService:
             lid = conn.execute(
                 "INSERT INTO labels (production_row_id, template_key, series, number, barcode, reservation_id, "
                 "reservation_mode, idempotency_key, content_json, print_status, excel_status, operator, computer, "
-                "created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                "created_at, updated_at, production_ref, template_sha256) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (row.id, row.template_key.value, res.series, res.number, res.barcode, res.reservation_id, res.mode,
                  res.idempotency_key, content.model_dump_json(), PrintStatus.barcode_reserved.value,
-                 ExcelStatus.not_queued.value, op, pc, now, now)).lastrowid
+                 ExcelStatus.not_queued.value, op, pc, now, now, self.production_ref(row), template_sha256)).lastrowid
             self.repo.set_row_status(row.id, RowStatus.barcode_reserved, conn)
             self.db.audit("label", lid, "barcode_reserved",
                           {"barcode": res.barcode, "row": row.id, "mode": res.mode}, op, pc, conn=conn)
@@ -222,7 +269,31 @@ class ProductionService:
         content = LabelContent.model_validate_json(label["content_json"])
         return self.templates.load(key).populate(spec, content, label["number"])
 
+    def _claim_print_lock(self, label_id: int) -> bool:
+        """Only one print job per label at a time (e.g. two browser tabs)."""
+        now = self._clock()
+        until = (now + timedelta(seconds=PRINT_LOCK_SECONDS)).isoformat()
+        with self.db.transaction() as conn:
+            cur = conn.execute("UPDATE labels SET print_lock_until=? WHERE id=? AND "
+                               "(print_lock_until IS NULL OR print_lock_until < ?)", (until, label_id, now.isoformat()))
+            return cur.rowcount == 1
+
+    def _release_print_lock(self, label_id: int) -> None:
+        self.db.execute("UPDATE labels SET print_lock_until=NULL WHERE id=?", (label_id,))
+
     def _print(self, label, kind: str, operator: str) -> Outcome:
+        if not self._claim_print_lock(label["id"]):
+            raise PrintInProgress(f"{label['barcode']} is being printed right now (another window/tab). Wait a moment.")
+        try:
+            # Re-read: another session may have printed it while we waited for the lock.
+            fresh = self.repo.get_label(label["id"])
+            if kind == "initial" and fresh["first_printed_at"]:
+                raise AlreadyPrinted(f"Row already printed as {fresh['barcode']}. Use 'Reprint' instead.")
+            return self._print_locked(fresh, kind, operator)
+        finally:
+            self._release_print_lock(label["id"])
+
+    def _print_locked(self, label, kind: str, operator: str) -> Outcome:
         op, pc = self._who(operator)
         lid = label["id"]
         xml = self._label_xml(label)

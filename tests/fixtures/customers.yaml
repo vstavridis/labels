@@ -1,0 +1,17 @@
+# Fictional customers used by the automated tests.
+rules:
+  - priority: 10
+    match: exact
+    pattern: "ΑΛΦΑΔΗΣ"
+    template: PG0
+    short_name: "ΑΛΦΑΔΗΣ"
+  - priority: 20
+    match: exact
+    pattern: "ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ"
+    template: PG
+    short_name: "ΒΗΤΑΚΗΣ"
+  - priority: 30
+    match: contains
+    pattern: "ΓΑΜΜΑΤΟΥ"
+    template: PG
+    requires_confirmation: true

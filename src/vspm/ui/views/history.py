@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import io
 import tempfile
 from pathlib import Path
 
@@ -40,26 +39,29 @@ def render() -> None:
         T("print_status"): S(r["print_status"]), T("excel_status"): S(r["excel_status"]),
         "Excel row": r["excel_row_number"],
     } for r in rows]
-    event = st.dataframe(table, hide_index=True, use_container_width=True, on_select="rerun",
+    event = st.dataframe(table, hide_index=True, width="stretch", on_select="rerun",
                          selection_mode="single-row", column_config={"id": None})
     sel = event.selection.rows if event and event.selection else []
     if sel:
         lab = ctx.repo.get_label(table[sel[0]]["id"])
         st.markdown(f"### {lab['barcode']}")
         c1, c2, c3 = st.columns(3)
-        if c1.button("🔁 " + T("reprint"), use_container_width=True, disabled=not lab["first_printed_at"]):
-            out = ctx.production.reprint(lab["id"], operator())
-            for m in out.messages:
-                flash("success" if out.print_ok else "error", f"{lab['barcode']}: {m}")
+        if c1.button("🔁 " + T("reprint"), width="stretch", disabled=not lab["first_printed_at"]):
+            try:
+                out = ctx.production.reprint(lab["id"], operator())
+                for m in out.messages:
+                    flash("success" if out.print_ok else "error", f"{lab['barcode']}: {m}")
+            except Exception as e:
+                flash("error", str(e))
             st.rerun()
-        if c2.button("📗 " + T("retry_excel"), use_container_width=True,
+        if c2.button("📗 " + T("retry_excel"), width="stretch",
                      disabled=lab["excel_status"] not in ("pending", "staged", "error", "conflict")):
             res = ctx.production.apply_staged([lab["id"]], operator()) if lab["excel_status"] == "staged" \
                 else {lab["id"]: ctx.production.sync_excel(lab["id"], operator())}
             for m in res.get(lab["id"], []):
                 flash("info", m)
             st.rerun()
-        if c3.button("🖨️ " + T("nav_print"), use_container_width=True):
+        if c3.button("🖨️ " + T("nav_print"), width="stretch"):
             st.session_state["row_id"] = lab["production_row_id"]
             r = ctx.repo.get_row(lab["production_row_id"])
             st.session_state["doc_id"] = r.document_id if r else None
@@ -80,13 +82,13 @@ def render() -> None:
     for p in problems:
         st.warning(p)
     c1, c2, c3 = st.columns(3)
-    if c1.button(T("apply_now"), use_container_width=True, disabled=not pending or not ctx.settings.excel_write_enabled):
+    if c1.button(T("apply_now"), width="stretch", disabled=not pending or not ctx.settings.excel_write_enabled):
         res = ctx.production.apply_staged(None, operator())
         for lid, msgs in res.items():
             for m in msgs:
                 flash("info", f"#{lid}: {m}")
         st.rerun()
-    if c2.button(T("reconcile"), use_container_width=True):
+    if c2.button(T("reconcile"), width="stretch"):
         try:
             res = ctx.production.reconcile()
             flash("success", f"✔ {len(res['synchronized'])} · missing {len(res['missing'])} · "
@@ -99,4 +101,4 @@ def render() -> None:
             p = Path(td) / "pending.xlsx"
             ctx.production.export_staging(p)
             c3.download_button(T("export_staging"), p.read_bytes(), file_name="vspm_excel_pending.xlsx",
-                               use_container_width=True)
+                               width="stretch")

@@ -161,7 +161,7 @@ def render() -> None:
         for f, el, eng in FIELDS:
             colcfg[f] = st.column_config.TextColumn(eng if en else el)
         edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
-                                use_container_width=True, key=f"editor_{doc_id}_{len(rows)}")
+                                width="stretch", key=f"editor_{doc_id}_{len(rows)}")
         for r in rows:
             reasons = [f"#{r.row_index}: {r.template_reason}"] if r.template_reason else []
             notes = [f"{k[5:]}: {v}" for k, v in r.flags.items() if k.startswith("note:")]
@@ -169,11 +169,11 @@ def render() -> None:
                 st.caption(" · ".join(reasons + notes))
         confirmed = st.checkbox(T("confirm_flags"))
         c1, c2 = st.columns(2)
-        if c1.button("💾 " + T("save"), type="primary", use_container_width=True):
+        if c1.button("💾 " + T("save"), type="primary", width="stretch"):
             msgs = apply_changes(ctx, doc_id, original, edited, confirmed)
             for m in msgs:
                 flash("warning", m)
             flash("success", T("saved"))
             st.rerun()
-        if c2.button("🖨️ " + T("nav_print"), use_container_width=True):
+        if c2.button("🖨️ " + T("nav_print"), width="stretch"):
             st.switch_page(st.session_state["_pages"]["print"])

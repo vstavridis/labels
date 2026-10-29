@@ -23,9 +23,9 @@ def transforms():
 
 
 def row(**kw) -> ProductionRow:
-    base = dict(id=1, customer_full="ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ", customer_short="ΓΚΟΥΝΤΑ", material="ΓΑΛΒΑΝΙΖΕ",
+    base = dict(id=1, customer_full="ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ", customer_short="ΒΗΤΑΚΗΣ", material="ΓΑΛΒΑΝΙΖΕ",
                 thickness="0,6", dimensions="34ΧΡΟΛΟ", weight="496", pieces="4", location="7",
-                source_roll="E1830460001", source_barcode="B-1", template_key=TemplateKey.VS, approved=True)
+                source_roll="ROLL-T-0001", source_barcode="B-1", template_key=TemplateKey.VS, approved=True)
     base.update(kw)
     return ProductionRow(**base)
 
@@ -58,7 +58,7 @@ def test_populate_keeps_layout_and_sets_values(registry, transforms, key):
     assert content.dimensions in text and content.thickness in text and "4" in text
     assert content.material in text
     if key != TemplateKey.PG0:
-        assert "ΓΚΟΥΝΤΑ" in text  # PG0 template has no customer line
+        assert "ΒΗΤΑΚΗΣ" in text  # PG0 template has no customer line
     bc = new.find("BARCODE")
     assert bc.findtext("Text") == barcode
     assert not bc.findtext("LinkedObjectName")  # unlinked from DYMO's own counter
@@ -92,15 +92,15 @@ def test_thickness_formatting():
 
 def test_excel_payload_pg0_maps_to_pg_and_uses_label_values(registry, transforms):
     spec = registry.spec(TemplateKey.PG0)
-    r = row(template_key=TemplateKey.PG0, customer_full="ΚΥΡΙΑΚΙΔΗΣ", customer_short="ΚΥΡΙΑΚΙΔΗΣ")
+    r = row(template_key=TemplateKey.PG0, customer_full="ΑΛΦΑΔΗΣ", customer_short="ΑΛΦΑΔΗΣ")
     c = build_label_content(r, spec, transforms, "PG02279")
     p = build_excel_payload(r, c, spec, transforms, date(2026, 10, 21))
     assert p.category == "PG"
     assert p.barcode == "PG02279"
-    assert p.customer == "ΚΥΡΙΑΚΙΔΗΣ"
+    assert p.customer == "ΑΛΦΑΔΗΣ"
     assert p.thickness == "0.60"
     assert p.print_date == "2026-10-21"
-    assert p.roll == "E1830460001" and p.location == "7"
+    assert p.roll == "ROLL-T-0001" and p.location == "7"
 
 
 def test_excel_material_for_ex_is_greek_canonical_by_default(registry, transforms):

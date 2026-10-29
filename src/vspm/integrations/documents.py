@@ -96,17 +96,21 @@ class GoogleDriveSource:
         return out
 
     def download(self, doc: RemoteDocument) -> bytes:
-        from googleapiclient.http import MediaIoBaseDownload  # type: ignore
-        buf = io.BytesIO()
         try:
-            req = self.service.files().get_media(fileId=doc.file_id, supportsAllDrives=True)
-            dl = MediaIoBaseDownload(buf, req)
-            done = False
-            while not done:
-                _, done = dl.next_chunk()
+            data = self.service.files().get_media(fileId=doc.file_id, supportsAllDrives=True).execute()
         except Exception as e:
             raise DocumentSourceError(f"Download failed for {doc.name}: {e}") from e
-        return buf.getvalue()
+        if not isinstance(data, (bytes, bytearray)) or not data:
+            raise DocumentSourceError(f"Download of {doc.name} returned no data")
+        return bytes(data)
+
+    @classmethod
+    def with_service(cls, folder_id: str, service) -> "GoogleDriveSource":
+        """Use an already-built Drive service (tests, custom authentication)."""
+        obj = cls.__new__(cls)
+        obj.folder_id = folder_id
+        obj.service = service
+        return obj
 
 
 class LocalFolderSource:
@@ -161,8 +165,8 @@ def synthetic_scan_png(title: str = "MOCK") -> bytes:
     except OSError:
         f = fb = ImageFont.load_default()
     d.text((60, 40), f"ΔΕΛΤΙΟ ΠΑΡΑΓΩΓΗΣ   ({title} - ΔΟΚΙΜΑΣΤΙΚΟ)", font=fb, fill="black")
-    d.text((60, 100), "ΕΠΩΝΥΜΙΑ: ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ     ΗΜΕΡ/ΝΙΑ: 21/10/2026", font=f, fill="black")
-    d.text((60, 150), "ΕΙΔΟΣ: ΓΑΛΒΑΝΙΖΕ   ΠΑΧΟΣ: 0,60   ΑΡ. ΡΟΛΟΥ: E1830460001   ΤΟΠΟΘΕΣΙΑ: 7", font=f, fill="black")
+    d.text((60, 100), "ΕΠΩΝΥΜΙΑ: ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ     ΗΜΕΡ/ΝΙΑ: 21/10/2026", font=f, fill="black")
+    d.text((60, 150), "ΕΙΔΟΣ: ΓΑΛΒΑΝΙΖΕ   ΠΑΧΟΣ: 0,60   ΑΡ. ΡΟΛΟΥ: ROLL-T-0001   ΤΟΠΟΘΕΣΙΑ: 7", font=f, fill="black")
     headers = ["ΔΙΑΣΤΑΣΕΙΣ", "ΠΟΣΟΤΗΤΑ", "ΤΕΜΑΧΙΑ", "ΔΕΜΑΤΑ", "BARCODE"]
     xs = [60, 380, 640, 880, 1100]
     y = 240

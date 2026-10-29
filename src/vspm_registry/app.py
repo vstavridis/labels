@@ -13,15 +13,15 @@ from __future__ import annotations
 import hmac
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import (
-    BigInteger, Column, DateTime, Integer, MetaData, String, Table, Text, UniqueConstraint, create_engine,
+    BigInteger, Column, DateTime, Index, Integer, MetaData, String, Table, Text, UniqueConstraint, create_engine,
     func, insert, select, text, update,
 )
 from sqlalchemy.engine import Engine
@@ -55,6 +55,7 @@ reservations = Table(
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
     UniqueConstraint("series", "number", name="uq_series_number"),
+    Index("ix_reservations_production_ref", "production_ref"),
 )
 
 audit = Table(
@@ -77,6 +78,8 @@ excel_jobs = Table(
     Column("claimed_by", String(100)),
     Column("claimed_at", DateTime(timezone=True)),
     Column("result", Text),
+    Column("attempts", Integer, nullable=False, default=0),
+    Column("next_attempt_at", DateTime(timezone=True)),
     Column("created_at", DateTime(timezone=True), nullable=False),
     Column("updated_at", DateTime(timezone=True), nullable=False),
 )
@@ -116,6 +119,16 @@ class BlockIn(BaseModel):
     operator: str = Field(min_length=1)
     computer: Optional[str] = None
     request_id: str = Field(min_length=8, max_length=150)
+
+
+class ObservedIn(BaseModel):
+    items: list[str] = Field(min_length=1, max_length=50000)
+    source: str = Field(min_length=1, max_length=100)
+    operator: Optional[str] = None
+    computer: Optional[str] = None
+
+
+BARCODE_RE = __import__("re").compile(r"(PG0|PG|VS|EX)(\d{1,9})")
 
 
 class StatusIn(BaseModel):
@@ -257,30 +270,102 @@ def create_app(database_url: Optional[str] = None, api_keys: Optional[list[str]]
 
     @app.post("/v1/blocks", dependencies=[Depends(client_key)])
     def reserve_block(body: BlockIn):
-        """Contiguous numbers for employees who still print manually in DYMO."""
+        """Contiguous numbers for employees who still print manually in DYMO.
+
+        Retrying with the same request_id returns the same block (exact match on
+        the block id - no pattern matching on user input)."""
+        block_ref = f"block:{body.request_id}"
+
+        def existing_block(c):
+            rows = c.execute(select(reservations).where(reservations.c.production_ref == block_ref)
+                             .order_by(reservations.c.number)).all()
+            if not rows:
+                return None
+            if rows[0].series != body.series or len(rows) != body.count:
+                raise HTTPException(409, "request_id already used for a different block")
+            return {"series": body.series, "barcodes": [r.barcode for r in rows], "first": rows[0].number,
+                    "last": rows[-1].number}
+
+        for _ in range(3):
+            try:
+                with engine.begin() as c:
+                    found = existing_block(c)
+                    if found:
+                        return found
+                    first, f = allocate(c, body.series, body.count)
+                    ts = now()
+                    for i in range(body.count):
+                        n = first + i
+                        c.execute(insert(reservations).values(
+                            series=body.series, number=n, barcode=fmt(f["prefix"], n, f["width"]),
+                            idempotency_key=f"{block_ref}:{i}", status="reserved", production_ref=block_ref,
+                            operator=body.operator, computer=body.computer, client_kind="manual",
+                            created_at=ts, updated_at=ts))
+                    log(c, "reserve_block", {"series": body.series, "first": first, "count": body.count,
+                                             "request_id": body.request_id}, body.operator, body.computer)
+                return {"series": body.series, "first": first, "last": first + body.count - 1,
+                        "barcodes": [fmt(f["prefix"], first + i, f["width"]) for i in range(body.count)]}
+            except IntegrityError:
+                continue  # same request_id sent twice at once: the other one won, return its block
+        raise HTTPException(500, "could not reserve block after retries")
+
+    @app.post("/v1/observed", dependencies=[Depends(client_key)])
+    def observe(body: ObservedIn):
+        """Report barcodes printed OUTSIDE the registry (manual DYMO counters, workbook history).
+
+        Unknown numbers are recorded and the sequence is moved past them, so the
+        registry never issues them. Numbers the registry already knows are listed
+        in `already_registered`: normal for a workbook scan (the app printed
+        them), but a DUPLICATE when reporting labels printed manually without a
+        block reservation."""
+        results = {"recorded": [], "already_registered": [], "advanced": {}, "ignored": []}
+        parsed = []
+        for item in body.items:
+            m = BARCODE_RE.fullmatch(item.strip().upper())
+            if m:
+                parsed.append((m.group(1), int(m.group(2))))
+            else:
+                results["ignored"].append(item)
+        parsed.sort()  # lock sequences in a fixed order (no deadlocks between concurrent reports)
         with engine.begin() as c:
-            existing = c.execute(select(reservations).where(
-                reservations.c.idempotency_key.like(f"block:{body.request_id}:%")).order_by(reservations.c.number)).all()
-            if existing:
-                return {"series": body.series, "barcodes": [r.barcode for r in existing],
-                        "first": existing[0].number, "last": existing[-1].number}
-            first, f = allocate(c, body.series, body.count)
-            ts = now()
-            for i in range(body.count):
-                n = first + i
+            for prefix, num in parsed:
+                # Lock the sequence row exactly like an allocation does, so checking
+                # "is this number free?" and recording it cannot interleave with an
+                # allocation of the same number by another request.
+                seq = c.execute(select(sequences).where(sequences.c.prefix == prefix).with_for_update()).first()
+                if seq is None:
+                    results["ignored"].append(f"{prefix}{num}")
+                    continue
+                barcode = fmt(seq.prefix, num, seq.format_width)
+                prev = c.execute(select(reservations).where(reservations.c.series == seq.series,
+                                                            reservations.c.number == num)).first()
+                if prev is not None:
+                    results["already_registered"].append({
+                        "barcode": barcode, "kind": prev.client_kind, "operator": prev.operator,
+                        "computer": prev.computer, "at": prev.created_at.isoformat() if prev.created_at else None})
+                    continue
+                ts = now()
                 c.execute(insert(reservations).values(
-                    series=body.series, number=n, barcode=fmt(f["prefix"], n, f["width"]),
-                    idempotency_key=f"block:{body.request_id}:{i}", status="reserved",
-                    production_ref="manual DYMO block", operator=body.operator, computer=body.computer,
-                    client_kind="manual", created_at=ts, updated_at=ts))
-            log(c, "reserve_block", {"series": body.series, "first": first, "count": body.count},
+                    series=seq.series, number=num, barcode=barcode, idempotency_key=f"observed:{seq.series}:{num}",
+                    status="printed", production_ref=f"observed:{body.source}", operator=body.operator,
+                    computer=body.computer, client_kind="observed", created_at=ts, updated_at=ts))
+                results["recorded"].append(barcode)
+                adv = c.execute(text(
+                    "UPDATE barcode_sequences SET next_value = :n + 1, updated_at = :ts "
+                    "WHERE series = :s AND next_value <= :n RETURNING next_value"),
+                    {"n": num, "s": seq.series, "ts": ts}).first()
+                if adv is not None:
+                    results["advanced"][seq.series] = int(adv.next_value)
+            log(c, "observed", {"source": body.source, "recorded": len(results["recorded"]),
+                                "already_registered": len(results["already_registered"]),
+                                "advanced": results["advanced"]},
                 body.operator, body.computer)
-        return {"series": body.series, "first": first, "last": first + body.count - 1,
-                "barcodes": [fmt(f["prefix"], first + i, f["width"]) for i in range(body.count)]}
+        return results
 
     @app.get("/v1/reservations", dependencies=[Depends(client_key)])
     def find_reservations(idempotency_key: Optional[str] = None, barcode: Optional[str] = None,
-                          series: Optional[str] = None, limit: int = Query(100, le=1000)):
+                          series: Optional[str] = None, production_ref: Optional[str] = None,
+                          limit: int = Query(100, le=1000)):
         q = select(reservations).order_by(reservations.c.id.desc()).limit(limit)
         if idempotency_key:
             q = q.where(reservations.c.idempotency_key == idempotency_key)
@@ -288,6 +373,8 @@ def create_app(database_url: Optional[str] = None, api_keys: Optional[list[str]]
             q = q.where(reservations.c.barcode == barcode)
         if series:
             q = q.where(reservations.c.series == series)
+        if production_ref:
+            q = q.where(reservations.c.production_ref == production_ref)
         with engine.connect() as c:
             return [_res_dict(r) for r in c.execute(q)]
 
@@ -320,7 +407,7 @@ def create_app(database_url: Optional[str] = None, api_keys: Optional[list[str]]
                 ts = now()
                 jid = c.execute(insert(excel_jobs).values(
                     idempotency_key=body.idempotency_key, barcode=body.barcode,
-                    payload=json.dumps(body.payload, ensure_ascii=False), status="pending",
+                    payload=json.dumps(body.payload, ensure_ascii=False), status="pending", attempts=0,
                     created_at=ts, updated_at=ts)).inserted_primary_key[0]
                 return _res_dict(c.execute(select(excel_jobs).where(excel_jobs.c.id == jid)).first())
         except IntegrityError:
@@ -339,22 +426,29 @@ def create_app(database_url: Optional[str] = None, api_keys: Optional[list[str]]
         with engine.connect() as c:
             return [_res_dict(r) for r in c.execute(q)]
 
+    def _aware(dt):
+        return None if dt is None else (dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc))
+
     @app.post("/v1/excel-jobs/claim", dependencies=[Depends(client_key)])
     def claim(body: ClaimIn):
+        """Hand pending jobs to ONE worker. Failed jobs are retried with back-off;
+        claims older than 10 minutes (crashed worker) are released."""
+        current = now()
         with engine.begin() as c:
-            stale = now().timestamp() - 600
             rows = c.execute(select(excel_jobs).where(excel_jobs.c.status.in_(["pending", "claimed", "error",
                                                                                 "conflict"]))
-                             .order_by(excel_jobs.c.id).limit(body.limit * 3)).all()
+                             .order_by(excel_jobs.c.id).limit(body.limit * 5)).all()
             picked = []
             for r in rows:
-                if r.status == "claimed" and r.claimed_at and r.claimed_at.replace(
-                        tzinfo=r.claimed_at.tzinfo or timezone.utc).timestamp() > stale:
+                if r.status == "claimed" and _aware(r.claimed_at) and \
+                        (current - _aware(r.claimed_at)).total_seconds() < 600:
+                    continue
+                if r.status in ("error", "conflict") and _aware(r.next_attempt_at) and _aware(r.next_attempt_at) > current:
                     continue
                 res = c.execute(update(excel_jobs).where(excel_jobs.c.id == r.id,
                                                          excel_jobs.c.updated_at == r.updated_at)
-                                .values(status="claimed", claimed_by=body.worker, claimed_at=now(),
-                                        updated_at=now()))
+                                .values(status="claimed", claimed_by=body.worker, claimed_at=current,
+                                        updated_at=current))
                 if res.rowcount == 1:
                     picked.append(r.id)
                 if len(picked) >= body.limit:
@@ -367,9 +461,16 @@ def create_app(database_url: Optional[str] = None, api_keys: Optional[list[str]]
         if body.status not in ("done", "already_present", "error", "conflict"):
             raise HTTPException(422, "bad status")
         with engine.begin() as c:
+            job = c.execute(select(excel_jobs).where(excel_jobs.c.id == jid)).first()
+            if job is None:
+                raise HTTPException(404, "job not found")
+            attempts = (job.attempts or 0) + 1
+            delay = min(300 * 2 ** (attempts - 1), 3600)  # 5 min, 10, 20, ... max 1 h
             c.execute(update(excel_jobs).where(excel_jobs.c.id == jid).values(
-                status=body.status, result=json.dumps(body.result, ensure_ascii=False), updated_at=now()))
-        return {"id": jid, "status": body.status}
+                status=body.status, result=json.dumps(body.result, ensure_ascii=False), attempts=attempts,
+                next_attempt_at=(now() + timedelta(seconds=delay)) if body.status in ("error", "conflict") else None,
+                updated_at=now()))
+        return {"id": jid, "status": body.status, "attempts": attempts}
 
     # ---- manual DYMO users ---------------------------------------------------------------
     @app.get("/manual", response_class=HTMLResponse)

@@ -1,5 +1,11 @@
 # DYMO label templates used by VS Production Manager.
 #
+# Template FILES are found automatically in VSPM_TEMPLATE_DIR by the prefix of
+# their COUNTER object (VS, PG, PG0, EX). If two files share a prefix (e.g. a
+# template and its "(1)" copy) choose one in .env:
+#   VSPM_TEMPLATE_FILES=VS=<file name>.label;PG=<file name>.label
+# File names are deliberately not stored in this (public) file.
+#
 # The original .label files are NEVER modified. At print time the app makes an
 # in-memory working copy, fills the text runs below, sets the barcode to the
 # number allocated by the barcode registry and removes the link to DYMO's own
@@ -13,8 +19,7 @@
 
 templates:
   VS:
-    description: "ΚΟΜΜΕΝΑ - default"
-    files: ["ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1.label", "ΕΤΙΚΕΤΑ ΚΟΜΜΕΝΑ-1(1).label"]
+    description: "VS - default label"
     barcode_prefix: VS
     excel_category: VS
     label_language: el
@@ -33,8 +38,7 @@ templates:
     counter_object: COUNTER
 
   PG:
-    description: "ΠΑΓΟΥΝΗ"
-    files: ["ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-1.label"]
+    description: "PG label"
     barcode_prefix: PG
     excel_category: PG
     label_language: el
@@ -54,8 +58,7 @@ templates:
     counter_object: COUNTER
 
   PG0:
-    description: "ΠΑΓΟΥΝΗ-2 (ΚΥΡΙΑΚΙΔΗΣ)"
-    files: ["ΕΤΙΚΕΤΑ ΠΑΓΟΥΝΗ-2.label"]
+    description: "PG0 label (Excel category PG)"
     barcode_prefix: PG0
     excel_category: PG              # PG0 is recorded as PG in column G
     label_language: el
@@ -77,8 +80,7 @@ templates:
     counter_object: COUNTER
 
   EX:
-    description: "ΕΞΑΓΩΓΕΣ (English label)"
-    files: ["ΕΤΙΚΕΤΑ ΕΞΑΓΩΓΕΣ.label"]
+    description: "EX - export label (English)"
     barcode_prefix: EX
     excel_category: EX
     label_language: en              # material names are translated via materials.yaml

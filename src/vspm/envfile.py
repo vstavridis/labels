@@ -10,7 +10,7 @@ def read_env(path: Path) -> dict[str, str]:
     out: dict[str, str] = {}
     if not path.exists():
         return out
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
         m = re.match(r"^\s*([A-Z0-9_]+)\s*=\s*(.*)$", line)
         if m:
             val = re.sub(r"\s+#.*$", "", m.group(2)).strip().strip('"').strip("'")
@@ -19,7 +19,7 @@ def read_env(path: Path) -> dict[str, str]:
 
 
 def update_env(path: Path, values: dict[str, str]) -> None:
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines = path.read_text(encoding="utf-8-sig").splitlines() if path.exists() else []
     done = set()
     for i, line in enumerate(lines):
         m = re.match(r"^\s*([A-Z0-9_]+)\s*=", line)

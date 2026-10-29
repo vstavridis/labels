@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import zipfile
 from datetime import date, datetime
 
@@ -20,7 +21,7 @@ from tests.conftest import EXTRA_PARTS, FORMULAS
 
 def payload(**kw) -> ExcelRowPayload:
     d = dict(material="ΓΑΛΒΑΝΙΖΕ", thickness="0.60", dimensions="34ΧΡΟΛΟ", pieces="4", weight="496",
-             customer="ΓΚΟΥΝΤΑ", category="PG", barcode="PG7030", location="7", roll="E1830460001",
+             customer="ΒΗΤΑΚΗΣ", category="PG", barcode="PG7030", location="7", roll="ROLL-T-0001",
              print_date="2026-10-21")
     d.update(kw)
     return ExcelRowPayload(**d)
@@ -62,8 +63,8 @@ def test_append_exact_column_mapping(workbook, tmp_path):
     wb = openpyxl.load_workbook(workbook)
     ws = wb[DEFAULT_SHEET_NAME]
     vals = [ws.cell(5, c).value for c in range(1, 17)]
-    assert vals[:11] == ["ΓΑΛΒΑΝΙΖΕ", "0.60", "34ΧΡΟΛΟ", 4, 496, "ΓΚΟΥΝΤΑ", "PG", "PG7030", 7, None,
-                         "E1830460001"]
+    assert vals[:11] == ["ΓΑΛΒΑΝΙΖΕ", "0.60", "34ΧΡΟΛΟ", 4, 496, "ΒΗΤΑΚΗΣ", "PG", "PG7030", 7, None,
+                         "ROLL-T-0001"]
     for i, col in enumerate("LMNO"):
         assert vals[11 + i] == FORMULAS[col].format(r=5)
     assert vals[15] == datetime(2026, 10, 21)
@@ -91,16 +92,70 @@ def test_duplicate_write_is_prevented(workbook, tmp_path):
     assert ed.find_rows_with_value("H", "PG7030") == [5]
 
 
+def zip_parts(path) -> dict[str, bytes]:
+    # Always close the zip: on Windows an open handle blocks replacing the file.
+    with zipfile.ZipFile(path) as z:
+        return {n: z.read(n) for n in z.namelist()}
+
+
 def test_other_package_parts_preserved_byte_for_byte(workbook, tmp_path):
-    before = zipfile.ZipFile(workbook)
-    before_parts = {n: before.read(n) for n in before.namelist()}
+    before_parts = zip_parts(workbook)
     writer(workbook, tmp_path).append([payload()])
-    after = zipfile.ZipFile(workbook)
-    assert after.namelist() == list(before_parts)
-    changed = {n for n in before_parts if after.read(n) != before_parts[n]}
+    after = zip_parts(workbook)
+    assert list(after) == list(before_parts)
+    changed = {n for n in before_parts if after[n] != before_parts[n]}
     assert changed <= {"xl/workbook.xml", "xl/styles.xml", "xl/worksheets/sheet2.xml"}
     for name, data in EXTRA_PARTS.items():
-        assert after.read(name) == data
+        assert after[name] == data
+
+
+def test_transient_lock_is_retried(workbook, tmp_path):
+    import os
+    calls = {"n": 0}
+
+    def flaky_replace(src, dst):
+        calls["n"] += 1
+        if calls["n"] <= 2:  # e.g. OneDrive/antivirus holding the file for a moment
+            raise PermissionError(13, "Access is denied")
+        os.replace(src, dst)
+
+    w = writer(workbook, tmp_path, replace_func=flaky_replace, retry_delay=0.01)
+    assert w.append([payload()]).results[0].status == "written"
+    assert calls["n"] == 3
+    assert not list(workbook.parent.glob(".vspm-tmp-*"))
+
+
+def test_persistent_lock_fails_cleanly(workbook, tmp_path):
+    def locked(src, dst):
+        raise PermissionError(13, "Access is denied")
+
+    before = workbook.read_bytes()
+    w = writer(workbook, tmp_path, replace_func=locked, retry_delay=0.001, replace_retries=2)
+    with pytest.raises(WorkbookLockedError, match="3 attempts"):
+        w.append([payload()])
+    assert workbook.read_bytes() == before
+    assert not list(workbook.parent.glob(".vspm-tmp-*"))
+
+
+def test_change_during_lock_wait_is_not_overwritten(workbook, tmp_path):
+    def locked_then_changed(src, dst):
+        dst.write_bytes(dst.read_bytes() + b"x")  # someone else saved while we waited
+        raise PermissionError(13, "Access is denied")
+
+    w = writer(workbook, tmp_path, replace_func=locked_then_changed, retry_delay=0.001)
+    with pytest.raises(WorkbookChangedError):
+        w.append([payload()])
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows file-sharing semantics")
+def test_real_windows_open_handle_blocks_and_is_reported(workbook, tmp_path):
+    before = workbook.read_bytes()
+    w = writer(workbook, tmp_path, retry_delay=0.01, replace_retries=2)
+    with open(workbook, "rb"):  # another program holding the workbook open
+        with pytest.raises(WorkbookLockedError):
+            w.append([payload()])
+    assert workbook.read_bytes() == before
+    assert w.append([payload()]).results[0].status == "written"  # works once released
 
 
 def test_hidden_preformatted_row_becomes_visible(tmp_path):

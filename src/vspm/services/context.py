@@ -14,7 +14,7 @@ from vspm.config import BarcodeMode, DriveMode, OcrProvider as OcrMode, PrinterM
 from vspm.db.database import Database
 from vspm.db.repository import Repository
 from vspm.dymo.printers import CupsPrinter, DymoComPrinter, DymoWebServicePrinter, LabelPrinter, MockPrinter
-from vspm.dymo.template import TemplateRegistry
+from vspm.dymo.template import TemplateRegistry, parse_template_files
 from vspm.excel.writer import SafeWorkbookWriter
 from vspm.integrations.documents import (
     DocumentSource, GoogleDriveSource, LocalFolderSource, MockSource,
@@ -71,10 +71,20 @@ def _widths(templates: TemplateRegistry) -> tuple[dict[str, str], dict[str, int]
 
 def build_context(s: Settings) -> AppContext:
     problems: dict[str, str] = {}
+    if s.synced_folder_warning():
+        problems["data_dir"] = s.synced_folder_warning()
     db = Database(s.db_path)
     repo = Repository(db)
     customers = CustomerService(db, s.resolve(s.customers_config))
-    templates = TemplateRegistry.from_yaml(s.resolve(s.templates_config), s.resolve(s.template_dir))
+    if not s.resolve(s.customers_config).exists() and not customers.rules():
+        problems["customer_rules"] = (f"{s.customers_config} not found: no customer rules, every customer gets VS. "
+                                      "Copy config/customers.example.yaml and enter your real customers.")
+    try:
+        overrides = parse_template_files(s.template_files)
+    except ValueError as e:
+        problems["template_files"] = str(e)
+        overrides = {}
+    templates = TemplateRegistry.from_yaml(s.resolve(s.templates_config), s.resolve(s.template_dir), overrides)
     for key in templates.specs:
         try:
             templates.load(key)
@@ -122,7 +132,8 @@ def build_context(s: Settings) -> AppContext:
     writer = SafeWorkbookWriter(s.resolve(s.excel_path), s.excel_sheet, backup_dir=s.data_path / "excel_backups",
                                 date_format=s.excel_date_format, full_calc_on_load=s.excel_full_calc_on_load,
                                 block_on_conflict_copies=s.excel_block_on_conflict_copies,
-                                write_enabled=s.excel_write_enabled)
+                                write_enabled=s.excel_write_enabled,
+                                allowed_root=s.data_path if s.excel_require_test_copy else None)
 
     source: Optional[DocumentSource] = None
     try:

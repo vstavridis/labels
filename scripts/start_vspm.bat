@@ -1,6 +1,7 @@
 @echo off
 REM VS Production Manager - start the application (double-click this file).
 chcp 65001 >nul
+set PYTHONUTF8=1
 cd /d "%~dp0\.."
 if not exist ".venv\Scripts\python.exe" (
     echo The application is not installed yet. Run scripts\setup_windows.ps1 first.

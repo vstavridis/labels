@@ -50,12 +50,16 @@ def render() -> None:
         if s.ocr_provider.value == "mock":
             st.info("Mock AI: επιστρέφει δοκιμαστικά δεδομένα." if st.session_state["lang"] == "el"
                     else "Mock AI: returns demo data.")
+        keep_printed = False
         if rows:
             st.caption(T("ocr_again_warn"))
-        if st.button("🤖 " + T("read_ai"), type="primary", use_container_width=True):
+            if any(r.label_id is not None for r in rows):
+                st.warning(T("reread_printed"))
+                keep_printed = st.checkbox(T("reread_confirm"))
+        if st.button("🤖 " + T("read_ai"), type="primary", width="stretch"):
             with st.spinner(T("reading")):
                 try:
-                    new_rows = ctx.documents.run_ocr(doc_id, ctx.ocr_provider())
+                    new_rows = ctx.documents.run_ocr(doc_id, ctx.ocr_provider(), keep_printed=keep_printed)
                     st.success(T("ocr_done", n=len(new_rows)))
                     rows = new_rows
                     doc = ctx.repo.get_document(doc_id)
@@ -70,6 +74,6 @@ def render() -> None:
                            "ΔΙΑΣΤΑΣΕΙΣ": r.dimensions, "ΚΙΛΑ": r.weight, "ΤΕΜ": r.pieces, "ΕΤΙΚΕΤΑ":
                                r.template_key.value if r.template_key else "",
                            "⚠": ", ".join(k for k, v in r.flags.items() if v == "uncertain")} for r in rows],
-                         hide_index=True, use_container_width=True)
-            if st.button(T("go_review"), use_container_width=True):
+                         hide_index=True, width="stretch")
+            if st.button(T("go_review"), width="stretch"):
                 st.switch_page(st.session_state["_pages"]["review"])

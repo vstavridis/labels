@@ -38,6 +38,15 @@ STRINGS: dict[str, tuple[str, str]] = {
                  "{n} rows recognised. Review them on the Row review page."),
     "ocr_again_warn": ("Νέα ανάγνωση αντικαθιστά τις μη εκτυπωμένες γραμμές αυτού του εγγράφου.",
                        "Reading again replaces the unprinted rows of this document."),
+    "reread_printed": ("Αυτό το έγγραφο έχει ήδη εκτυπωμένες ετικέτες. Οι εκτυπωμένες γραμμές δεν αλλάζουν και "
+                       "δεν δημιουργούνται ξανά.",
+                       "This document already has printed labels. Printed rows are kept and are not created again."),
+    "reread_confirm": ("Κατάλαβα - νέα ανάγνωση μόνο για τις μη εκτυπωμένες γραμμές",
+                       "Understood - re-read only the unprinted rows"),
+    "possible_duplicate": ("Πιθανή διπλή εκτύπωση: {e}", "Possible duplicate: {e}"),
+    "print_anyway": ("Είναι διαφορετική γραμμή - εκτύπωση παρ' όλα αυτά",
+                     "It is a different line - print anyway"),
+    "verify": ("Έλεγχος ετικέτας και Excel", "Verify label and Excel record"),
     "go_review": ("Μετάβαση στον έλεγχο", "Go to review"),
     "page": ("Σελίδα", "Page"),
     # review

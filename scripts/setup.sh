@@ -9,11 +9,12 @@ PY="${PYTHON:-python3}"
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e ".[ai,google,dev]"
 [ -f .env ] || { cp .env.example .env; echo "Created .env from .env.example - edit it before going live."; }
+[ -f config/customers.yaml ] || { cp config/customers.example.yaml config/customers.yaml; echo "Created config/customers.yaml - replace the example rules with your real customers."; }
 mkdir -p data credentials reference_files
 .venv/bin/vspm init
-if ls reference_files/*.xlsx >/dev/null 2>&1; then
+if ls reference_files/*.xlsx >/dev/null 2>&1 && ! ls data/test_workbook/*.xlsx >/dev/null 2>&1; then
   .venv/bin/vspm make-test-workbook
-  .venv/bin/vspm report
 fi
+if ls reference_files/*.label >/dev/null 2>&1; then .venv/bin/vspm report; fi
 .venv/bin/python -m pytest -q
 echo "Done. Start the app with: bash scripts/start.sh"

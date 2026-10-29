@@ -6,6 +6,7 @@ The original files are only ever read. `populate()` returns a new XML string.
 from __future__ import annotations
 
 import copy
+import hashlib
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,7 +25,6 @@ class TemplateError(Exception):
 class TemplateSpec:
     key: TemplateKey
     description: str
-    files: list[str]
     barcode_prefix: str
     excel_category: str
     label_language: str
@@ -34,32 +34,85 @@ class TemplateSpec:
     weight_object: str
     barcode_object: str
     counter_object: str
+    files: list[str] = field(default_factory=list)
+
+
+def parse_template_files(value: str) -> dict[str, str]:
+    """`VS=a.label;PG=b.label` -> {"VS": "a.label", "PG": "b.label"}."""
+    out: dict[str, str] = {}
+    for part in filter(None, (p.strip() for p in (value or "").split(";"))):
+        if "=" not in part:
+            raise ValueError(f"Invalid VSPM_TEMPLATE_FILES entry '{part}' (expected KEY=file.label)")
+        k, v = part.split("=", 1)
+        out[TemplateKey(k.strip()).value] = v.strip()
+    return out
+
+
+def counter_prefix_of(path: Path, counter_name: str = "COUNTER") -> str | None:
+    """Counter PreText of a .label file (None if unreadable / no counter)."""
+    try:
+        tpl = LabelTemplate.load(path)
+    except Exception:
+        return None
+    info = tpl.counter_info(counter_name)
+    return info["prefix"] if info else None
 
 
 @dataclass
 class TemplateRegistry:
+    """Finds the DYMO template for each label type.
+
+    Resolution order: explicit file from VSPM_TEMPLATE_FILES, then names listed
+    in templates.yaml, then automatic detection by the COUNTER prefix stored in
+    each .label file (VS / PG / PG0 / EX). Detection never guesses: if two
+    files share a prefix the operator must choose one in VSPM_TEMPLATE_FILES.
+    """
+
     specs: dict[TemplateKey, TemplateSpec]
     template_dir: Path
+    overrides: dict[str, str] = field(default_factory=dict)
     _cache: dict[TemplateKey, "LabelTemplate"] = field(default_factory=dict)
+    _prefixes: dict[Path, str | None] | None = None
 
     @classmethod
-    def from_yaml(cls, path: Path, template_dir: Path) -> "TemplateRegistry":
+    def from_yaml(cls, path: Path, template_dir: Path, overrides: dict[str, str] | None = None) -> "TemplateRegistry":
         data = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
         specs: dict[TemplateKey, TemplateSpec] = {}
         for k, v in data["templates"].items():
             key = TemplateKey(k)
             specs[key] = TemplateSpec(key=key, **v)
-        return cls(specs=specs, template_dir=Path(template_dir))
+        return cls(specs=specs, template_dir=Path(template_dir), overrides=dict(overrides or {}))
 
     def spec(self, key: TemplateKey) -> TemplateSpec:
         return self.specs[TemplateKey(key)]
 
+    def detected(self) -> dict[Path, str | None]:
+        if self._prefixes is None:
+            self._prefixes = {}
+            if self.template_dir.exists():
+                for p in sorted(self.template_dir.glob("*.label")):
+                    self._prefixes[p] = counter_prefix_of(p)
+        return self._prefixes
+
     def find_file(self, key: TemplateKey) -> Path | None:
-        for name in self.spec(key).files:
+        key = TemplateKey(key)
+        spec = self.spec(key)
+        if key.value in self.overrides:
+            p = Path(self.overrides[key.value])
+            p = p if p.is_absolute() else self.template_dir / p
+            if not p.exists():
+                raise TemplateError(f"VSPM_TEMPLATE_FILES: file for {key.value} not found: {p}")
+            return p
+        for name in spec.files:
             p = self.template_dir / name
             if p.exists():
                 return p
-        return None
+        candidates = [p for p, prefix in self.detected().items() if prefix == spec.barcode_prefix]
+        if len(candidates) > 1:
+            raise TemplateError(
+                f"Several templates in {self.template_dir} have counter prefix {spec.barcode_prefix}: "
+                f"{[c.name for c in candidates]}. Choose one with VSPM_TEMPLATE_FILES={key.value}=<file name>.")
+        return candidates[0] if candidates else None
 
     def load(self, key: TemplateKey) -> "LabelTemplate":
         key = TemplateKey(key)
@@ -67,8 +120,8 @@ class TemplateRegistry:
             path = self.find_file(key)
             if path is None:
                 raise TemplateError(
-                    f"Template file for {key.value} not found in {self.template_dir} "
-                    f"(expected one of {self.spec(key).files})"
+                    f"No template for {key.value} in {self.template_dir}: no .label file whose COUNTER prefix is "
+                    f"'{self.spec(key).barcode_prefix}' (or set VSPM_TEMPLATE_FILES)."
                 )
             tpl = LabelTemplate.load(path)
             tpl.check_spec(self.spec(key))
@@ -81,9 +134,10 @@ def _local(tag: Any) -> str:
 
 
 class LabelTemplate:
-    def __init__(self, path: Path | None, root: etree._Element):
+    def __init__(self, path: Path | None, root: etree._Element, sha256: str | None = None):
         self.path = path
         self.root = root
+        self.sha256 = sha256  # fingerprint of the original file (proves it was never modified)
 
     @classmethod
     def load(cls, path: Path) -> "LabelTemplate":
@@ -98,7 +152,7 @@ class LabelTemplate:
             raise TemplateError(f"Not a valid DYMO label XML: {e}") from e
         if root.tag != "DieCutLabel":
             raise TemplateError(f"Unsupported label root element <{root.tag}>")
-        return cls(path, root)
+        return cls(path, root, hashlib.sha256(data).hexdigest())
 
     # ---- object access ---------------------------------------------------
     def objects(self) -> list[tuple[etree._Element, etree._Element]]:

@@ -56,19 +56,35 @@ def test_mock_source():
     assert len(docs) == 5 and MockSource().download(docs[0])[:4] == b"\x89PNG"
 
 
+class FakeStream:
+    def __init__(self, resp):
+        self.resp = resp
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def get_final_message(self):
+        return self.resp
+
+
 class FakeMessages:
-    def __init__(self, stop_reason="end_turn"):
+    def __init__(self, stop_reason="end_turn", text=None):
         self.calls = []
         self.stop_reason = stop_reason
+        self.text = text if text is not None else ExtractedDocument.model_validate(
+            {"rows": [{"row_number": 1}]}).model_dump_json()
 
-    def parse(self, **kw):
+    def stream(self, **kw):
         self.calls.append(kw)
-        doc = ExtractedDocument.model_validate({"rows": [{"row_number": 1}]})
-        return SimpleNamespace(stop_reason=self.stop_reason, parsed_output=doc)
+        return FakeStream(SimpleNamespace(stop_reason=self.stop_reason,
+                                          content=[SimpleNamespace(type="text", text=self.text)]))
 
 
-def fake_client(stop_reason="end_turn"):
-    m = FakeMessages(stop_reason)
+def fake_client(stop_reason="end_turn", text=None):
+    m = FakeMessages(stop_reason, text)
     return SimpleNamespace(messages=m, beta=SimpleNamespace(messages=m)), m
 
 
@@ -83,8 +99,9 @@ def test_ai_request_for_pdf_uses_document_block_and_structured_output():
     out = ocr.extract(OcrInput(_pdf(2), "application/pdf", "a.pdf"))
     call = m.calls[0]
     assert call["model"] == "claude-opus-5-5"
-    assert call["output_format"] is ExtractedDocument
-    assert call["output_config"] == {"effort": "high"}
+    assert call["output_config"]["effort"] == "high"
+    assert call["output_config"]["format"]["type"] == "json_schema"
+    assert call["max_tokens"] >= 32000
     assert call["fallbacks"] == "default" and call["betas"] == ["server-side-fallback-2026-07-01"]
     content = call["messages"][0]["content"]
     assert content[0]["type"] == "document" and content[0]["source"]["media_type"] == "application/pdf"
@@ -107,6 +124,34 @@ def test_ai_request_for_image_without_fallbacks():
 def test_ai_refusal_is_reported():
     client, _ = fake_client("refusal")
     with pytest.raises(OcrError, match="declined"):
+        AnthropicOcr(api_key="x", upload_consent=True, client=client).extract(OcrInput(_pdf(1), "application/pdf", "a"))
+
+
+def test_ai_schema_requires_every_field_and_matches_model():
+    from vspm.integrations.ocr.providers import extraction_output_format
+    schema = extraction_output_format()["schema"]
+
+    def objects(n):
+        if isinstance(n, dict):
+            if n.get("type") == "object":
+                yield n
+            for v in n.values():
+                yield from objects(v)
+        elif isinstance(n, list):
+            for v in n:
+                yield from objects(v)
+
+    objs = list(objects(schema))
+    assert {o.get("title") for o in objs} == {"ExtractedDocument", "ExtractedRow", "ExtractedValue"}
+    for o in objs:
+        assert o["additionalProperties"] is False and set(o["required"]) == set(o["properties"])
+    raw = schema["$defs"]["ExtractedValue"]["properties"]["raw"]
+    assert "null" in str(raw)  # unreadable values can be stated as null
+
+
+def test_ai_response_not_matching_schema_is_reported():
+    client, _ = fake_client(text='{"rows": "not a list"}')
+    with pytest.raises(OcrError, match="expected structure"):
         AnthropicOcr(api_key="x", upload_consent=True, client=client).extract(OcrInput(_pdf(1), "application/pdf", "a"))
 
 

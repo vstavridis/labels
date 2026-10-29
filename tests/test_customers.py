@@ -10,14 +10,14 @@ from tests.conftest import ROOT
 
 @pytest.fixture
 def svc():
-    return CustomerService(Database(":memory:"), ROOT / "config" / "customers.yaml")
+    return CustomerService(Database(":memory:"), ROOT / "tests" / "fixtures" / "customers.yaml")
 
 
 @pytest.mark.parametrize("a,b", [
-    ("ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ", "γκούντα-παγούνη"),
-    ("ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ", "  ΓΚΟΥΝΤΑ   –  ΠΑΓΟΥΝΗ. "),
+    ("ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ", "βητάκης-γαμμάτου"),
+    ("ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ", "  ΒΗΤΑΚΗΣ   –  ΓΑΜΜΑΤΟΥ. "),
     ("ΠΑΠΑΪΩΑΝΝΟΥ", "ΠΑΠΑΙΩΑΝΝΟΥ"),
-    ("ΚΥΡΙΑΚΙΔΗΣ", "ΚYΡIΑΚIΔΗΣ"),  # Latin Y and I typed inside a Greek word
+    ("ΑΛΦΑΔΗΣ", "AΛΦAΔΗΣ"),  # Latin A typed inside a Greek word
 ])
 def test_normalization_equivalences(a, b):
     assert normalize_key(a) == normalize_key(b)
@@ -26,14 +26,14 @@ def test_normalization_equivalences(a, b):
 def test_greek_and_latin_names_are_distinct():
     assert normalize_key("METAL") != normalize_key("ΜΕΤΑΛ")
     assert script_profile("NORTHWIND LTD") == "latin"
-    assert script_profile("ΓΚΟΥΝΤΑ") == "greek"
-    assert script_profile("ΚYΡΙΑΚΙΔΗΣ") == "mixed"
+    assert script_profile("ΒΗΤΑΚΗΣ") == "greek"
+    assert script_profile("ΑΛΦAΔΗΣ") == "mixed"
 
 
 def test_vs_pg_pg0_ex_selection(svc):
-    assert svc.select("ΚΥΡΙΑΚΙΔΗΣ").template_key == TemplateKey.PG0
-    assert svc.select("Γκούντα - Παγούνη").template_key == TemplateKey.PG
-    assert svc.select("Γκούντα - Παγούνη").short_name == "ΓΚΟΥΝΤΑ"
+    assert svc.select("ΑΛΦΑΔΗΣ").template_key == TemplateKey.PG0
+    assert svc.select("Βητάκης - Γαμμάτου").template_key == TemplateKey.PG
+    assert svc.select("Βητάκης - Γαμμάτου").short_name == "ΒΗΤΑΚΗΣ"
     ex = svc.select("SOME COMPANY LTD")
     assert ex.template_key == TemplateKey.EX and ex.needs_confirmation
     vs = svc.select("ΠΑΠΑΔΟΠΟΥΛΟΣ")
@@ -41,10 +41,10 @@ def test_vs_pg_pg0_ex_selection(svc):
 
 
 def test_specialized_rules_take_precedence(svc):
-    # "contains ΠΑΓΟΥΝΗ" (priority 30) would match too, but the exact rule (20) wins.
-    sel = svc.select("ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ")
+    # "contains ΓΑΜΜΑΤΟΥ" (priority 30) would match too, but the exact rule (20) wins.
+    sel = svc.select("ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ")
     assert not sel.needs_confirmation
-    other = svc.select("ΔΟΚΙΜΗ ΠΑΓΟΥΝΗ")
+    other = svc.select("ΔΟΚΙΜΗ ΓΑΜΜΑΤΟΥ")
     assert other.template_key == TemplateKey.PG and other.needs_confirmation
 
 

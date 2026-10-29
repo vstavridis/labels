@@ -18,7 +18,7 @@ def render() -> None:
     show_flash()
     head, btn = st.columns([5, 1])
     head.title(T("nav_dashboard"))
-    if btn.button("🔄 " + T("refresh"), use_container_width=True):
+    if btn.button("🔄 " + T("refresh"), width="stretch"):
         st.cache_data.clear()
         st.rerun()
 
@@ -60,7 +60,7 @@ def render() -> None:
         with col:
             with st.container(border=True):
                 try:
-                    st.image(page_pngs(d.doc_id, 500)[0], use_container_width=True)
+                    st.image(page_pngs(d.doc_id, 500)[0], width="stretch")
                 except Exception as e:
                     st.caption(f"(preview unavailable: {e})")
                 st.markdown(f"**{d.remote.name}**")
@@ -70,5 +70,5 @@ def render() -> None:
                 st.caption(f"{T('rows_recognized')}: {d.rows} · {T('printed')}: {d.printed}")
                 if d.changed_since_processing:
                     st.warning(T("changed_doc"))
-                if st.button(T("open"), key=f"open{d.doc_id}", use_container_width=True):
+                if st.button(T("open"), key=f"open{d.doc_id}", width="stretch"):
                     go("review" if d.rows else "recognition", d.doc_id)

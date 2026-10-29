@@ -89,7 +89,7 @@ def show_document(doc_id: int) -> None:
         st.error(f"{e}")
         return
     for i, png in enumerate(pages, 1):
-        st.image(png, caption=f"{T('page')} {i}/{len(pages)}", use_container_width=True)
+        st.image(png, caption=f"{T('page')} {i}/{len(pages)}", width="stretch")
 
 
 def flash(kind: str, msg: str) -> None:

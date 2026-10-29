@@ -22,7 +22,7 @@ def v(raw, conf=0.97, uncertain=False, ditto=False, note=None):
 
 @pytest.fixture
 def customers():
-    return CustomerService(Database(":memory:"), ROOT / "config" / "customers.yaml")
+    return CustomerService(Database(":memory:"), ROOT / "tests" / "fixtures" / "customers.yaml")
 
 
 def test_three_production_entries_give_three_rows(customers):
@@ -35,7 +35,7 @@ def test_three_production_entries_give_three_rows(customers):
 def test_shared_fields_inherited_from_header(customers):
     rows = rows_from_extraction(ExtractedDocument.model_validate(DEMO_EXTRACTION), customers)
     for r in rows:
-        assert r.customer_full == "ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ"
+        assert r.customer_full == "ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ"
         assert r.material == "ΓΑΛΒΑΝΙΖΕ"
         assert r.thickness == "0,60"  # comma decimal preserved for display
         assert r.location == "7"
@@ -94,15 +94,15 @@ def test_multi_page_rows_are_ordered_by_page(customers):
 
 def test_template_suggested_from_customer_rules(customers):
     data = {"rows": [
-        {"row_number": 1, "customer": v("ΚΥΡΙΑΚΙΔΗΣ")},
-        {"row_number": 2, "customer": v("ΓΚΟΥΝΤΑ - ΠΑΓΟΥΝΗ")},
+        {"row_number": 1, "customer": v("ΑΛΦΑΔΗΣ")},
+        {"row_number": 2, "customer": v("ΒΗΤΑΚΗΣ - ΓΑΜΜΑΤΟΥ")},
         {"row_number": 3, "customer": v("NORTHWIND LTD")},
         {"row_number": 4, "customer": v("ΠΑΠΑΔΟΠΟΥΛΟΣ")},
     ]}
     rows = rows_from_extraction(ExtractedDocument.model_validate(data), customers)
     assert [r.template_key for r in rows] == [TemplateKey.PG0, TemplateKey.PG, TemplateKey.EX, TemplateKey.VS]
     assert rows[2].template_needs_confirmation  # Latin name: EX only suggested
-    assert rows[1].customer_short == "ΓΚΟΥΝΤΑ"
+    assert rows[1].customer_short == "ΒΗΤΑΚΗΣ"
 
 
 def test_weight_unit_suffix_removed(customers):

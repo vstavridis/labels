@@ -138,16 +138,30 @@ class Repository:
             "SELECT * FROM production_rows WHERE document_id=? AND deleted=0 ORDER BY row_index, id", (doc_id,))]
 
     def replace_rows_for_document(self, doc_id: int, rows: list[ProductionRow]) -> list[int]:
-        """Replace unprinted rows (used after re-running OCR). Printed rows are kept."""
+        """Replace the unprinted rows after re-running OCR.
+
+        Printed rows are kept, and a new row with the same row number as a printed
+        row is NOT inserted (it would be a second, printable copy of a production
+        line that already has a label).
+        """
         ids = []
         with self.db.transaction() as conn:
+            printed = {r["row_index"] for r in conn.execute(
+                "SELECT row_index FROM production_rows WHERE document_id=? AND deleted=0 AND id IN "
+                "(SELECT production_row_id FROM labels)", (doc_id,))}
             conn.execute(
                 "UPDATE production_rows SET deleted=1, updated_at=? WHERE document_id=? AND deleted=0 AND id NOT IN "
                 "(SELECT production_row_id FROM labels)", (utcnow(), doc_id))
             for r in rows:
+                if r.row_index in printed:
+                    continue
                 r.document_id = doc_id
                 ids.append(self.add_row(r, conn))
         return ids
+
+    def printed_row_count(self, doc_id: int) -> int:
+        return self.db.one("SELECT COUNT(*) FROM production_rows r JOIN labels l ON l.production_row_id = r.id "
+                           "WHERE r.document_id=? AND r.deleted=0", (doc_id,))[0]
 
     # ---- labels ---------------------------------------------------------------
     def get_label(self, label_id: int) -> sqlite3.Row | None:
