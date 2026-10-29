@@ -4,8 +4,10 @@
 
 1. The selected scan is sent to the AI model: PDFs as a PDF document (all pages), images as JPEG pages
    (long side ≤ 2400 px).
-2. The model must answer with JSON matching `ExtractedDocument` (`src/vspm/domain/models.py`). The API's
-   structured-output feature validates this; the app validates again with Pydantic.
+2. The model must answer with JSON matching `ExtractedDocument` (`src/vspm/domain/models.py`). The request
+   uses the API's structured outputs with a schema in which **every field is required** (an unreadable value
+   must be stated as `null` + uncertain, never silently omitted); the reply is validated again with Pydantic.
+   The request is streamed with a generous token limit so long multi-page documents are not cut off.
 3. Every value carries the raw text, a confidence, an `uncertain` flag, `is_ditto` and an optional note.
    The prompt (`src/vspm/integrations/ocr/base.py`) forbids guessing: unreadable values must be `null` and
    uncertain.
@@ -46,9 +48,18 @@ ANTHROPIC_API_KEY=sk-ant-...
 * Documents are only sent when an operator presses the button; nothing is uploaded automatically.
 * The extracted JSON is stored locally in `data\vspm.sqlite3`.
 
+## Testing with your documents
+
+```powershell
+.\.venv\Scripts\vspm.exe ocr-test C:\scans\order_0123.pdf --save data\ocr_0123.json
+```
+
+prints every recognised row (⚠ marks uncertain fields) without creating anything in the app. Use it on
+3–5 real documents first ([PILOT_CHECKLIST.md](PILOT_CHECKLIST.md) C4).
+
 ## Accuracy notes
 
 * No real scans were available during development, so **extraction quality on your handwriting is untested**.
   Before go-live, run 20–30 real documents and compare with what you would type manually
-  (see [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md)).
+  (see [PILOT_CHECKLIST.md](PILOT_CHECKLIST.md)).
 * Common confusions the prompt asks the model to flag: 1/7, 0/6, 5/6, Greek Χ vs Latin X, Ρ vs P, Η vs H.

@@ -27,9 +27,13 @@ Nothing in the app requires Windows. What each operating system offers for print
 
 ## 2. Install
 
+Use a **local** folder that is not synchronised by OneDrive/Dropbox. On Windows, Documents and Desktop are
+often redirected into OneDrive — use e.g. `C:\VSPM` instead (the app warns if its data folder is synced,
+because the local database can be damaged by synchronisation).
+
 ```bash
-git clone https://github.com/<owner>/<repo>.git vs-production-manager
-cd vs-production-manager
+git clone https://github.com/<owner>/<repo>.git C:/VSPM        # Windows; e.g. ~/vspm on macOS/Linux
+cd C:/VSPM
 ```
 
 macOS / Linux:
@@ -56,7 +60,9 @@ cp .env.example .env
 
 ## 3. Reference files and test workbook
 
-Copy the `.label` templates and a copy of `Σχισμενα.xlsx` into `reference_files/`, then:
+Copy the `.label` templates (copies, not the shared OneDrive originals) and a copy of `Σχισμενα.xlsx` into
+`reference_files/`. Template file names do not matter: each is recognised by its COUNTER prefix. Put your real
+customer rules in `config/customers.yaml` (created from the example; git-ignored). Then:
 
 ```bash
 .venv/bin/vspm make-test-workbook     # copy to data/test_workbook/ (default VSPM_EXCEL_PATH)
@@ -66,7 +72,7 @@ Copy the `.label` templates and a copy of `Σχισμενα.xlsx` into `referenc
 ## 4. Configure `.env`
 
 Edit `.env` in any text editor, or on the **Ρυθμίσεις** page (press **Επαναφόρτωση** afterwards). Start in
-demo mode and enable integrations one at a time with [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md).
+demo mode and enable integrations one at a time with [PILOT_CHECKLIST.md](PILOT_CHECKLIST.md).
 
 ## 5. Start
 

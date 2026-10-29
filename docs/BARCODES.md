@@ -23,11 +23,47 @@ operator, computer, client type and timestamps; every change is written to an au
 * `max_value` per sequence can cap allocation (useful for pilot ranges).
 * Sequences can only move forward (unless explicitly overridden) and never below an existing reservation.
 
-### Employees who still print manually in DYMO
+### Coexistence with manual DYMO printing
 
-Open `https://<registry>/manual`, enter the API key, name, series and number of labels. The page reserves a
-contiguous block (e.g. VS11720–VS11724). Set the DYMO counter's start to the first number and print exactly
-that many labels. The block is recorded in the registry like any other reservation.
+The registry can only prevent duplicates for numbers it hands out. Three tools cover manual printing:
+
+1. **Reserve before printing (preferred).** Open `https://<registry>/manual`, enter the API key, your name,
+   the series and the number of labels. The page reserves a contiguous block (e.g. VS11720–VS11724). In DYMO
+   Label set the counter of the template to the first number and print exactly that many labels. Retrying
+   the same request (e.g. after a network error) returns the same block, never a second one.
+2. **Report numbers printed without a reservation.**
+   `vspm registry observe VS11800 VS11801 --source manual` records them and moves the sequence past them, so
+   the registry never issues them later. Any number listed under `already_registered` had **also** been
+   issued by the registry: that is a real duplicate — find both labels.
+3. **Teach the registry the workbook's history.**
+   `vspm registry observe-workbook --workbook <copy of the workbook>` sends every barcode in column H
+   (read-only). Numbers already known are normal here (labels printed by the app); unknown ones are recorded
+   and the sequences are advanced past them. Run it at go-live and whenever manual printing happened.
+
+**Duplicates remain possible** while someone prints with a DYMO counter that was neither reserved nor
+reported. The registry cannot see those labels. The only complete protection is: every manual print starts
+with a block reservation (1), and the counters inside the shared template files are not used as the source
+of numbers.
+
+### Audit (October 2026)
+
+| Property | How it is achieved | Verified by |
+|---|---|---|
+| No number issued twice | one transaction: row-locked `UPDATE … RETURNING` on the sequence + insert with `UNIQUE(series, number)` and `UNIQUE(barcode)` | 800 parallel requests across **two registry processes on PostgreSQL 16**: one number per key, no duplicates, no gaps (`tests/test_registry_postgres.py`) |
+| Retries never consume a second number | `UNIQUE(idempotency_key)`; a concurrent duplicate rolls back its own allocation | same test (many repeats of each key) |
+| Manual blocks never overlap app numbers | blocks use the same locked allocation | 120 single + 30 block requests interleaved: contiguous, no overlap |
+| Same block request sent twice at once | exact `production_ref` match, `IntegrityError` → return existing block | 20 concurrent identical requests → one block |
+| Manually printed numbers never issued later | `/v1/observed` locks the sequence row before checking/recording | observations interleaved with 80 allocations |
+| Sequence cannot move back below issued numbers | checked in `PUT /v1/sequences` | `tests/test_barcodes.py` |
+| Duplicate print of the same document line from two PCs | `production_ref` = scan file id + row number, checked before reserving; operator must confirm "different line" | `tests/test_pilot_safety.py` |
+
+Defects found and fixed in this audit: the block lookup used an SQL `LIKE` with the user's request id, so a
+request id containing `%` or `_` could receive **another person's block**; two identical block requests at
+the same moment returned an error; a retried request with a different count silently returned the old block;
+failed Excel queue jobs were retried every 30 s forever (now 5 min doubling, max 1 h).
+
+Not yet verified: the registry deployed on your server behind HTTPS, network failures between the PCs and the
+server, PostgreSQL backups/restore.
 
 ## Deploying the registry
 

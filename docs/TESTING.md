@@ -20,9 +20,14 @@ in `tests/fixtures/labels/` (real template structure, logos and customer text re
 | `test_barcodes.py` | pilot/mock allocator, registry concurrency (90 parallel requests), idempotency, max ranges, manual blocks, client errors, Excel queue |
 | `test_production.py` | Print & Save, reprint (same barcode, no Excel row), failed print/retry, failed Excel/retry, registry offline, restart recovery, staging + reconciliation, timezone date |
 | `test_integrations.py` | local/mock document sources, PDF pages, AI request shape/consent/refusal (fake client), DYMO web-service adapter (simulated), CUPS adapter (fake `lp`, PDF page size), `.env` editing |
+| `test_pilot_safety.py` | re-reading a printed document, duplicate line on another PC (registry), print lock, test-copy guard, template detection by counter prefix, verification catches tampering/duplicates, dry run, DYMO template test |
+| `test_drive.py` | Google Drive connector with a fake Drive API: query, latest 5, revisions, download, errors |
+| `test_ui.py` | every Streamlit page renders; Read with AI; the Print & Save button produces one label and one Excel row (headless) |
+| `test_platform.py` | `.env` with BOM, `.env.example` parses without comment leakage, OneDrive-synced data folder warning, Greek output on a legacy console code page |
+| `test_registry_postgres.py` | **only with `VSPM_TEST_POSTGRES_URL`**: two registry processes on PostgreSQL, 800 parallel requests, blocks vs singles, concurrent identical blocks, manual numbers vs allocations |
 | `test_reference_files.py` | **only when `reference_files\` exists**: real templates match config; write to a temporary copy of the real workbook (only 3 parts change, formulas consistent, original unchanged); open result in LibreOffice if installed |
 
 ## Manual integration tests on your computers
 
-See [INTEGRATION_CHECKLIST.md](INTEGRATION_CHECKLIST.md). These cannot run in CI: physical printing, Google
+See [PILOT_CHECKLIST.md](PILOT_CHECKLIST.md). These cannot run in CI: physical printing, Google
 Drive authentication, AI on real scans, Excel desktop opening the written file, OneDrive sync behaviour.

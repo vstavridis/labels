@@ -58,16 +58,10 @@ server, or a network/shared queue).
 
 ## Hardware test procedure (not yet performed)
 
-**No physical label has been printed during development.** On the computer that will print:
-
-1. Set `VSPM_PRINTER_MODE` (`dymo_web`, `cups` or `dymo_com`), run `vspm check` → printer listed and connected.
-2. `vspm test-print --template VS` → prints a label marked TEST/ΔΟΚΙΜΗ without allocating a number or touching
-   Excel. Repeat for `PG`, `PG0`, `EX`.
-3. Compare each with a label printed manually from DYMO Label: layout, fonts, bold parts, logos, date/time.
-4. Scan the barcode with your barcode scanner; it must read exactly the barcode text (e.g. `TEST0001`).
-5. Open `data/test_print.label` in DYMO Label v8 to confirm the file opens and the barcode is not linked to
-   the counter.
-6. Record results in the integration checklist. If one route fails, try another available on your OS.
+**No physical label has been printed by the app during development.** Follow
+[DYMO_TEST_PROCEDURE.md](DYMO_TEST_PROCEDURE.md): it prints TEST labels from your original templates without
+touching their counters (`vspm dymo-test --print`), checks them in DYMO Label v8, with the scanner and against a
+production label, and proves with SHA-256 fingerprints that the templates are unchanged.
 
 ## Known limitations
 

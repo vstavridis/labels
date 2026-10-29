@@ -31,25 +31,25 @@ To stop a local app, close its terminal window.
 
 ---
 
-## Status: what is implemented and what still needs your environment
+## Status
 
-| Area | Implemented & tested here | Needs credentials / hardware / live test |
-|---|---|---|
-| Reference analysis | ✅ `docs/FINDINGS.md`, `docs/REFERENCE_REPORT.md` | — |
-| Streamlit UI (6 pages, Greek/English) | ✅ driven end-to-end in a browser with mock services (on Linux) | Your review on your computers |
-| Google Drive (latest 5, preview, download, revision check) | ✅ code; local-folder & mock sources tested | **Not tested against Google** (needs your service account + folder) |
-| AI handwriting extraction | ✅ Claude vision + structured output; request shape and post-processing tested with mocked responses | **Not tested on real scans** (none provided; needs API key + consent) |
-| Label selection / customer rules | ✅ tested | Rules for your other customers |
-| DYMO template filling + preview | ✅ tested on all 4 real templates | — |
-| DYMO printing | ✅ mock printer; DYMO Web Service (Windows/macOS), CUPS (macOS/Linux) and legacy COM adapters; Web Service and CUPS tested against simulated services | **No physical print has been made.** Run the DYMO checklist |
-| Barcode registry (PostgreSQL service) | ✅ service + client, concurrency/idempotency tests on SQLite | Deploying it with PostgreSQL; counter reconciliation |
-| Excel writing | ✅ exact A–P mapping, L–O formulas, dates, idempotency, locks, backups; tested on a copy of the real workbook and opened in LibreOffice | **Not tested with Excel itself, OneDrive sync or concurrent editors** |
-| Transaction tracking, reprint, recovery | ✅ tested | — |
+Verified (details and evidence: [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)):
 
-Nothing in this repository has printed a physical label, authenticated to Google, called the AI service with a
-real document, or written to the live OneDrive workbook.
+* Windows installation with `setup_windows.ps1` and start with `start_vspm.bat` on a clean Windows machine
+  (CI), full test suite green on Windows, macOS and Linux.
+* One Print & Save on a **copy of the real workbook** with the **real templates**: layout unchanged, intended
+  barcode, exactly one Excel row with correct values, formulas L–O (external link kept), real `dd/mm/yyyy`
+  date; reprint adds nothing; source workbook and templates unchanged.
+* Barcode registry: no duplicates or gaps with two server processes on PostgreSQL 16; manual DYMO blocks.
 
----
+Not yet tested — needs your printer, credentials or live environment
+([docs/PILOT_CHECKLIST.md](docs/PILOT_CHECKLIST.md)): physical printing on the LabelWriter, Google Drive
+authentication, AI on real handwritten scans, Microsoft Excel opening the written file, OneDrive concurrent
+editing, the registry deployed on a server.
+
+Pilot tools: `vspm dymo-test`, `vspm pilot-dryrun`, `vspm verify-label`, `vspm drive-test`, `vspm ocr-test`.
+
+> The GitHub repository is currently **public** — see [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Installation (Windows, macOS, Linux)
 
@@ -71,7 +71,7 @@ Then edit `.env` (created from `.env.example`) and start with `bash scripts/star
 
 Out of the box the app runs in **safe demo mode**: mock scans, mock AI, mock printer, barcode allocation
 disabled, Excel in staging mode pointing at a test copy. Switch each integration on with the
-[integration checklist](docs/INTEGRATION_CHECKLIST.md).
+[integration checklist](docs/PILOT_CHECKLIST.md).
 
 ## Documentation
 
@@ -86,7 +86,10 @@ disabled, Excel in staging mode pointing at a test copy. Switch each integration
 | Excel / OneDrive | [docs/EXCEL_ONEDRIVE.md](docs/EXCEL_ONEDRIVE.md) |
 | Barcode registry & migration | [docs/BARCODES.md](docs/BARCODES.md) |
 | Tests | [docs/TESTING.md](docs/TESTING.md) |
-| Go-live checklist | [docs/INTEGRATION_CHECKLIST.md](docs/INTEGRATION_CHECKLIST.md) |
+| **Windows pilot checklist** (verified vs. to do) | [docs/PILOT_CHECKLIST.md](docs/PILOT_CHECKLIST.md) |
+| DYMO test with original templates | [docs/DYMO_TEST_PROCEDURE.md](docs/DYMO_TEST_PROCEDURE.md) |
+| Test results | [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) |
+| Security / confidentiality review | [docs/SECURITY.md](docs/SECURITY.md) |
 | Troubleshooting | [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) |
 
 ## Repository layout
