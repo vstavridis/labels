@@ -34,11 +34,11 @@ external workbook `ΑΠΟΘΗΚΗ.xlsx`. The app never invents lookup results.
 ## Safety measures
 
 1. **Write switch**: nothing is written unless `VSPM_EXCEL_WRITE_ENABLED=true`.
-2. **Pre-checks**: file exists and is fully downloaded (not an online-only placeholder); not open in Excel on
-   this PC (`~$` owner file / exclusive-open test); no OneDrive conflict copies (`Σχισμενα-<PC>.xlsx`).
+2. **Pre-checks**: file exists and is fully downloaded (online-only placeholder detection: Windows); not open
+   in Excel on this computer (`~$` owner file on Windows/macOS, plus an exclusive-open test on Windows); no OneDrive conflict copies (`Σχισμενα-<PC>.xlsx`).
 3. **Idempotency**: the barcode (column H) is the key. If it is already present the row is not written again.
 4. **Optimistic lock**: the file's SHA-256 is checked again immediately before replacing it; any change → abort.
-5. **Backup** of the previous version in `data\excel_backups\` (last 200 kept).
+5. **Backup** of the previous version in `data/excel_backups/` (last 200 kept).
 6. **Atomic replace** (temp file + rename, like Excel itself), then **read-back verification** of every
    written cell and that the barcode appears exactly once.
 7. Every attempt is recorded (`excel_attempts`, audit log) with hashes and backup path.
@@ -54,15 +54,15 @@ has not been tested.**
 |---|---|---|
 | `staging` (default) | until the checklist below is complete, or when people often have the workbook open | rows wait in the app; **Ιστορικό** offers *Εγγραφή στο Excel τώρα* (direct write when the workbook is closed), *download a sheet for manual entry*, and *Reconcile* (reads the workbook and marks rows that are present) |
 | `direct` | one PC prints labels, or each PC writes only when nobody else edits | each Print & Save writes immediately with all checks; failures stay pending and can be retried |
-| `registry_queue` | several PCs print labels | PCs send rows to the barcode registry's queue; **one designated PC** runs `scripts\start_excel_worker.bat` (`vspm excel-worker`) and is the only writer, so writes are serialised |
+| `registry_queue` | several PCs print labels, or the app runs on Linux/a server without OneDrive | PCs send rows to the barcode registry's queue; **one designated computer with OneDrive** (Windows or macOS) runs `vspm excel-worker` (`scripts\start_excel_worker.bat` on Windows) and is the only writer, so writes are serialised |
 
 Recommended: start with `staging` on the test copy → `direct` on the test copy → `direct` (single PC) or
 `registry_queue` (several PCs) on the live workbook during quiet hours, after the checklist.
 
 ## Test-copy validation (do this first)
 
-```powershell
-.\.venv\Scripts\vspm.exe make-test-workbook       # data\test_workbook\Σχισμενα.xlsx
+```bash
+.venv/bin/vspm make-test-workbook       # data/test_workbook/Σχισμενα.xlsx
 ```
 
 Set `VSPM_EXCEL_PATH=data/test_workbook/Σχισμενα.xlsx`, `VSPM_EXCEL_MODE=direct`,

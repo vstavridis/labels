@@ -34,6 +34,7 @@ class PrinterMode(str, Enum):
     mock = "mock"
     dymo_web = "dymo_web"
     dymo_com = "dymo_com"
+    cups = "cups"
 
 
 class BarcodeMode(str, Enum):
@@ -82,6 +83,8 @@ class Settings(BaseSettings):
     printer_name: str = "DYMO LabelWriter Wireless"
     dymo_web_url: str = "https://127.0.0.1:41951"
     dymo_web_verify_tls: bool = False
+    cups_options: str = "-o fit-to-page"
+    cups_rotate: bool = True
     templates_config: Path = Path("config/templates.yaml")
     template_dir: Path = Path("reference_files")
 

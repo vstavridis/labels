@@ -1,0 +1,25 @@
+# Streamlit app in a container. Mount your .env, templates and the folder that
+# contains the (synchronised) workbook. See docs/INSTALL.md "Docker".
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: deploy/app/Dockerfile
+    restart: unless-stopped
+    env_file: ../../.env
+    environment:
+      VSPM_DATA_DIR: /data
+      VSPM_TEMPLATE_DIR: /templates
+      # Printing from a container: use CUPS on the host or a network print server.
+      CUPS_SERVER: ${CUPS_SERVER:-host.docker.internal:631}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - vspm-data:/data
+      - ../../reference_files:/templates:ro
+      - ${VSPM_WORKBOOK_DIR:-../../data/test_workbook}:/workbook
+      - ../../credentials:/app/credentials:ro
+    ports:
+      - "8501:8501"
+volumes:
+  vspm-data:

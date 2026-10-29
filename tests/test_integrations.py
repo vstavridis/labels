@@ -157,3 +157,36 @@ def test_env_file_update_keeps_comments(tmp_path):
     text = p.read_text(encoding="utf-8")
     assert text.startswith("# comment")
     assert read_env(p) == {"VSPM_A": "two words", "VSPM_B": "x", "VSPM_C": "΄Ετοιμα προϊόντα"}
+
+
+def test_cups_printer_builds_lp_command_and_pdf(registry):
+    from vspm.dymo.printers import CupsPrinter
+    from vspm.domain.models import LabelContent, TemplateKey
+    calls = []
+
+    def runner(cmd, **kw):
+        calls.append(cmd)
+        if cmd[0] == "lpstat":
+            return SimpleNamespace(returncode=0, stdout="DYMO_LabelWriter_Wireless\n", stderr="")
+        assert open(cmd[-1], "rb").read(4) == b"%PDF"
+        return SimpleNamespace(returncode=0, stdout="request id is DYMO-1 (1 file(s))", stderr="")
+
+    p = CupsPrinter("-o fit-to-page", runner=runner)
+    spec = registry.spec(TemplateKey.VS)
+    xml = registry.load(TemplateKey.VS).populate(spec, LabelContent(
+        template_key=TemplateKey.VS, material="M", thickness="0,60", dimensions="D", pieces="1",
+        customer_short="C", weight="1", barcode="VS1"), 1)
+    assert p.status()[0] and p.list_printers()[0].name == "DYMO_LabelWriter_Wireless"
+    res = p.print_label(xml, "DYMO_LabelWriter_Wireless")
+    assert res.ok and "DYMO-1" in res.job_ref
+    assert calls[-1][:3] == ["lp", "-d", "DYMO_LabelWriter_Wireless"] and "fit-to-page" in calls[-1]
+    import pypdfium2 as pdfium
+    w, h = pdfium.PdfDocument(p.render_pdf(xml))[0].get_size()  # points; rotated to the feed direction
+    assert h > w and abs(w / 72 * 25.4 - 54) < 1 and abs(h / 72 * 25.4 - 100.8) < 1
+
+
+def test_cups_printer_reports_lp_error(registry):
+    from vspm.dymo.printers import CupsPrinter
+    p = CupsPrinter(runner=lambda cmd, **kw: SimpleNamespace(returncode=1, stdout="", stderr="lp: no such printer"))
+    res = p.print_label(registry.load("VS").path.read_text(encoding="utf-8"), "X")
+    assert not res.ok and "no such printer" in res.error

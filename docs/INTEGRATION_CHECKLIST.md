@@ -3,18 +3,19 @@
 Work top to bottom. Record date, who, and result for each line. Do not skip to the live workbook.
 
 ## 0. Base installation
-- [ ] `scripts\setup_windows.ps1` completed, all tests passed on the Windows PC
+- [ ] Setup script completed (`scripts/setup.sh` or `scripts\setup_windows.ps1`), all tests passed on each computer
+- [ ] Decided: app on each printing computer, or one shared computer/server ([INSTALL.md](INSTALL.md))
 - [ ] `vspm report` run on the current reference files; [FINDINGS.md](FINDINGS.md) §4 decisions taken
       (EX material language, customer rules, short names, dimension notation)
-- [ ] App starts with `start_vspm.bat` in demo mode; full mock workflow done once
+- [ ] App starts (`start.sh` / `start_vspm.bat` / `vspm run`) in demo mode; full mock workflow done once
 
 ## 1. DYMO printer ([DYMO.md](DYMO.md))
-- [ ] `VSPM_PRINTER_MODE=dymo_web`; `vspm check` lists `DYMO LabelWriter Wireless` as connected
+- [ ] `VSPM_PRINTER_MODE` set (`dymo_web` on Windows/macOS, `cups` on macOS/Linux); `vspm check` lists the LabelWriter
 - [ ] `vspm test-print --template VS|PG|PG0|EX` — each physical label matches a manual DYMO label
 - [ ] Barcode scanner reads the printed barcode text exactly
-- [ ] `data\test_print.label` opens in DYMO Label v8; barcode not linked to the counter
+- [ ] `data/test_print.label` opens in DYMO Label v8; barcode not linked to the counter
 - [ ] Shared OneDrive templates' counters unchanged after app printing
-- [ ] (if needed) `dymo_com` tried as fallback
+- [ ] (if needed) another print route tried as fallback
 
 ## 2. Barcode registry ([BARCODES.md](BARCODES.md))
 - [ ] Registry deployed with PostgreSQL, HTTPS, backups; `/health` reachable from every PC

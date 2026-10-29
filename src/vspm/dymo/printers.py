@@ -4,8 +4,10 @@
 * DymoWebServicePrinter - DYMO's local "DYMO Label Web Service" (installed with
   DYMO Label 8.5+ / DYMO Connect). Accepts the full label XML, so our populated
   working copy is printed exactly. Also renders DYMO's own preview PNG.
-* DymoComPrinter     - legacy DLS SDK COM objects (Dymo.DymoAddIn), Windows only,
-  via pywin32. Opens a temporary .label file and prints it.
+* CupsPrinter        - macOS / Linux: renders the filled label to a 300 dpi PDF
+  and sends it to the CUPS queue of the LabelWriter with `lp`.
+* DymoComPrinter     - optional legacy DLS SDK COM objects (Dymo.DymoAddIn),
+  Windows only, via pywin32. Opens a temporary .label file and prints it.
 
 None of these can confirm that a physical label came out of the printer; the
 operator confirms that in the app.
@@ -19,7 +21,11 @@ from __future__ import annotations
 
 import base64
 import json
+import io
 import os
+import shlex
+import shutil
+import subprocess
 import sys
 import tempfile
 import uuid
@@ -157,6 +163,67 @@ class DymoWebServicePrinter:
             return base64.b64decode(data)
         except ValueError:
             return None
+
+
+class CupsPrinter:
+    """CUPS (macOS / Linux). Uses DYMO's CUPS driver for the LabelWriter.
+
+    The label is rendered by this app's renderer (not DYMO's), rotated to the
+    feed direction and printed as a PDF whose page size equals the label.
+    """
+
+    mode = "cups"
+
+    def __init__(self, options: str = "", dpi: int = 300, rotate: bool = True, runner=subprocess.run):
+        self.options = shlex.split(options)
+        self.dpi = dpi
+        self.rotate = rotate
+        self.run = runner
+        if runner is subprocess.run and shutil.which("lp") is None:
+            raise PrinterError("CUPS command 'lp' not found (install CUPS / use macOS or Linux)")
+
+    def render_pdf(self, label_xml: str) -> bytes:
+        from PIL import Image
+        png = render_label_png(label_xml, scale=self.dpi / 1440)
+        img = Image.open(io.BytesIO(png)).convert("L")
+        if self.rotate:
+            img = img.rotate(90, expand=True)
+        buf = io.BytesIO()
+        img.save(buf, format="PDF", resolution=self.dpi)
+        return buf.getvalue()
+
+    def list_printers(self) -> list[PrinterInfo]:
+        out = self.run(["lpstat", "-e"], capture_output=True, text=True)
+        return [PrinterInfo(n.strip(), "cups") for n in (out.stdout or "").splitlines() if n.strip()]
+
+    def status(self) -> tuple[bool, str]:
+        try:
+            names = [p.name for p in self.list_printers()]
+            return bool(names), f"CUPS printers: {names}"
+        except Exception as e:
+            return False, f"CUPS not available: {e}"
+
+    def print_label(self, label_xml: str, printer_name: str, copies: int = 1) -> PrintResult:
+        try:
+            pdf = self.render_pdf(label_xml)
+        except Exception as e:
+            return PrintResult(False, error=f"Could not render label: {e}")
+        fd, tmp = tempfile.mkstemp(suffix=".pdf")
+        os.close(fd)
+        try:
+            Path(tmp).write_bytes(pdf)
+            cmd = ["lp", "-d", printer_name, "-n", str(int(copies)), "-t", "VS Production Manager", *self.options, tmp]
+            out = self.run(cmd, capture_output=True, text=True)
+        except Exception as e:
+            return PrintResult(False, error=f"lp failed: {e}")
+        finally:
+            Path(tmp).unlink(missing_ok=True)
+        if out.returncode != 0:
+            return PrintResult(False, error=f"lp error: {(out.stderr or out.stdout or '').strip()[:300]}")
+        return PrintResult(True, job_ref=(out.stdout or "").strip()[:100] or "cups")
+
+    def render_preview(self, label_xml: str) -> Optional[bytes]:
+        return None
 
 
 class DymoComPrinter:

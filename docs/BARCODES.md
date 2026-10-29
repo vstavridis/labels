@@ -53,11 +53,11 @@ The counter values in the templates are **not authoritative**. For each series:
    (DYMO Label → counter properties), and the workbook (`vspm report` lists the highest per prefix).
 3. Initialise the registry with the next free number (admin key required):
 
-   ```powershell
-   .\.venv\Scripts\vspm.exe registry set-sequence VS 11712 --prefix VS --width 3
-   .\.venv\Scripts\vspm.exe registry set-sequence PG 7030 --prefix PG --width 3
-   .\.venv\Scripts\vspm.exe registry set-sequence PG0 2279 --prefix PG0 --width 3
-   .\.venv\Scripts\vspm.exe registry set-sequence EX 3417 --prefix EX --width 3
+   ```bash
+   .venv/bin/vspm registry set-sequence VS 11712 --prefix VS --width 3
+   .venv/bin/vspm registry set-sequence PG 7030 --prefix PG --width 3
+   .venv/bin/vspm registry set-sequence PG0 2279 --prefix PG0 --width 3
+   .venv/bin/vspm registry set-sequence EX 3417 --prefix EX --width 3
    ```
 
    (Example numbers only — use your reconciled values; consider adding a safety gap, e.g. +50.)

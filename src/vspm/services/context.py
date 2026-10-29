@@ -13,7 +13,7 @@ from vspm.barcodes.allocator import (
 from vspm.config import BarcodeMode, DriveMode, OcrProvider as OcrMode, PrinterMode, Settings
 from vspm.db.database import Database
 from vspm.db.repository import Repository
-from vspm.dymo.printers import DymoComPrinter, DymoWebServicePrinter, LabelPrinter, MockPrinter
+from vspm.dymo.printers import CupsPrinter, DymoComPrinter, DymoWebServicePrinter, LabelPrinter, MockPrinter
 from vspm.dymo.template import TemplateRegistry
 from vspm.excel.writer import SafeWorkbookWriter
 from vspm.integrations.documents import (
@@ -108,6 +108,8 @@ def build_context(s: Settings) -> AppContext:
     try:
         if s.printer_mode == PrinterMode.dymo_web:
             printer = DymoWebServicePrinter(s.dymo_web_url, s.dymo_web_verify_tls)
+        elif s.printer_mode == PrinterMode.cups:
+            printer = CupsPrinter(s.cups_options, rotate=s.cups_rotate)
         elif s.printer_mode == PrinterMode.dymo_com:
             printer = DymoComPrinter(s.data_path / "dymo_tmp")
         else:

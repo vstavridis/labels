@@ -29,12 +29,13 @@ def _ctx():
 
 
 @app.command()
-def run(port: int = 8501):
-    """Start the Streamlit user interface."""
+def run(port: int = 8501, host: str = typer.Option("localhost", help="0.0.0.0 = reachable from other computers")):
+    """Start the Streamlit user interface (any OS)."""
     import subprocess
     ui = Path(__file__).parent / "ui" / "app.py"
     raise SystemExit(subprocess.call([sys.executable, "-m", "streamlit", "run", str(ui), "--server.port", str(port),
-                                      "--server.address", "localhost", "--browser.gatherUsageStats", "false"]))
+                                      "--server.address", host, "--server.headless", "true",
+                                      "--browser.gatherUsageStats", "false"]))
 
 
 @app.command()
