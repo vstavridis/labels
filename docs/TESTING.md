@@ -31,3 +31,14 @@ in `tests/fixtures/labels/` (real template structure, logos and customer text re
 
 See [PILOT_CHECKLIST.md](PILOT_CHECKLIST.md). These cannot run in CI: physical printing, Google
 Drive authentication, AI on real scans, Excel desktop opening the written file, OneDrive sync behaviour.
+
+## PostgreSQL and browser tests
+
+* Whole suite on PostgreSQL: `VSPM_TEST_DATABASE_URL=postgresql://postgres:postgres@localhost:5432/vspm_test
+  python -m pytest --ignore=tests/browser` (each test gets its own schema). The registry concurrency tests
+  additionally use `VSPM_TEST_POSTGRES_URL=postgresql+psycopg://…`.
+* Browser printing: `pip install playwright` (and `python -m playwright install chromium` unless you use an
+  installed browser), then `python -m pytest tests/browser`. `VSPM_TEST_BROWSER_CHANNEL=chrome|msedge` uses
+  the installed Chrome / Edge. Port 41951 must be free (stop the real DYMO service first). The app runs over
+  HTTPS and the browser treats it as a public site, so Local Network Access rules apply as on the cloud.
+

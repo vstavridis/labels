@@ -63,3 +63,20 @@ No credentials were ever committed, so **no key rotation is needed**.
 * AI: documents are sent to the provider only when `VSPM_OCR_UPLOAD_CONSENT=true` and only when an
   operator presses *Read with AI* ([AI_PROVIDER.md](AI_PROVIDER.md)).
 * Google Drive: prefer a service account that can see only the scan folder ([GOOGLE_DRIVE.md](GOOGLE_DRIVE.md)).
+
+## Hosted app (Streamlit Community Cloud)
+
+* **Login**: Streamlit OIDC (Google or Microsoft). Required whenever `VSPM_DATABASE_URL` is set unless
+  `VSPM_REQUIRE_AUTH=false` is set explicitly. Fails closed: missing `[auth]` secrets, an empty
+  `VSPM_ALLOWED_EMAILS`, an unlisted or unverified e-mail → nothing of the app is shown.
+* **Roles**: only `VSPM_ADMIN_EMAILS` may upload templates, set barcode series, report manual numbers
+  and reserve blocks. Server settings are read-only on the page in cloud mode.
+* **Secrets** live in the Streamlit secrets store (template: `.streamlit/secrets.toml.example`);
+  `.streamlit/secrets.toml` is git-ignored. The settings page never shows the database URL, keys or the
+  employee e-mail lists (only counts).
+* **Templates and customer data** are stored in the database, not in the public repository.
+* **Browser printing** talks only to the DYMO service on the same PC (`127.0.0.1`), with the per-site
+  Local Network Access permission; no browser security feature needs to be disabled.
+* **Database**: use TLS (`sslmode=require`), a dedicated database user, and provider backups.
+* Error details shown to users are limited to the error type (`.streamlit/config.toml`).
+

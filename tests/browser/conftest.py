@@ -29,6 +29,13 @@ ROOT = Path(__file__).resolve().parents[2]
 FIXTURES = ROOT / "tests" / "fixtures"
 
 
+def unavailable(msg: str):
+    """Skip locally; FAIL in CI jobs that exist to run these tests (VSPM_REQUIRE_BROWSER=1)."""
+    if os.environ.get("VSPM_REQUIRE_BROWSER") == "1":
+        pytest.fail(msg)
+    pytest.skip(msg)
+
+
 def free_port() -> int:
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
@@ -41,7 +48,7 @@ def fake_dymo():
     try:
         svc = FakeDymoService(41951).start()
     except OSError as e:
-        pytest.skip(f"port 41951 busy (is a real DYMO service running here?): {e}")
+        unavailable(f"port 41951 busy (is a real DYMO service running here?): {e}")
     yield svc
     svc.stop()
 
@@ -99,7 +106,7 @@ def browser(app_server):
         try:
             b = p.chromium.launch(channel=channel, args=args)
         except Exception as e:
-            pytest.skip(f"browser not available ({channel or 'bundled chromium'}): {e}")
+            unavailable(f"browser not available ({channel or 'bundled chromium'}): {e}")
         yield b
         b.close()
 

@@ -119,3 +119,45 @@ VSPM_EXCEL_REQUIRE_TEST_COPY=true
   Excel itself has cached `-` in column L for **all 328 existing rows** — worth checking in Excel whether the
   ΠΟΙΟΤΗΤΑ lookup works at all (pre-existing, not caused by the app).
 * Concurrent OneDrive editing behaviour is untested (F2).
+
+---
+
+## Part 4 — hosted app (Streamlit Community Cloud) with browser printing
+
+Deployment: [STREAMLIT_CLOUD.md](STREAMLIT_CLOUD.md). Per PC: [WINDOWS_PC_SETUP.md](WINDOWS_PC_SETUP.md).
+How browser printing works and what was investigated: [BROWSER_PRINTING.md](BROWSER_PRINTING.md).
+
+### Verified during development (no printer, no cloud account)
+
+| # | What | Evidence |
+|---|---|---|
+| W1 | DYMO bridge detects the service, lists printers, prints TEST0001 with the exact template XML (barcode and counter = TEST0001, 1 copy) | `tests/browser/test_dymo_bridge_browser.py` — Chrome 153, real app over HTTPS, fake DYMO service, app origin treated as public |
+| W2 | Local Network Access: works with the permission, blocked with guidance without it; service down and print failure reported, never retried | same |
+| W3 | Production label from the browser: reserved barcode printed, counter neutralised, one Excel row; reload prints nothing; reprint = same barcode, no Excel row | `tests/browser/test_production_browser.py` |
+| W4 | Two tabs of the same browser press Print & Save at once → one physical print | same (found and fixed a real double-submission race in the bridge) |
+| W5 | Station not verified → production printing disabled; download fallback contains the reserved barcode | same |
+| W6 | Server rules: barcode committed before the job, one pending job per label, rejected/hash-mismatch never counted as printed, unanswered jobs need a decision | `tests/test_browser_print.py` |
+| W7 | Whole test suite on PostgreSQL 16; two app instances on one database: 20 parallel prints → 20 unique gapless barcodes; same row at once → one label | `tests/test_cloud_database.py`, CI *whole suite on PostgreSQL* |
+| W8 | Database barcode mode refuses until a series is set; manual numbers reported are never issued; blocks for manual DYMO users | `tests/test_cloud_database.py` |
+| W9 | Templates uploaded to the database are byte-exact and versioned; reprints and verification use the original version | `tests/test_template_store.py` |
+| W10 | Login decision fails closed (no config / empty list / unlisted / unverified → refused); real app stays closed without `[auth]`; non-admins cannot change templates or series | `tests/test_auth.py`, `tests/test_ui.py` |
+| W11 | Chrome and Edge on Windows | CI job *browser printing* (Chrome, Windows / Edge, Windows) — see the run on the branch |
+
+### Needs physical validation 🖨️🔑🏭 — on each of the two PCs unless noted
+
+- [ ] P1 🔑 Deploy (STREAMLIT_CLOUD.md 1–3); sign in with an employee e-mail → app opens; with an e-mail
+      not on the list → refused; signed out → nothing visible.
+- [ ] P2 🖨️ `https://127.0.0.1:41951/DYMO/DLS/Printing/StatusConnected` shows `true` in Chrome **and** Edge.
+- [ ] P3 🖨️ Printer page: the Local Network Access prompt appears; after **Allow**: *DYMO service ✅*,
+      the USB LabelWriter Wireless listed as connected, *Top frame: OK*. Note browser versions.
+- [ ] P4 🖨️ TEST0001 on VS, PG, PG0, EX: compare with a label printed from DYMO Label (layout, fonts,
+      barcode size); **scan** → `TEST0001`. The .label files in DYMO Label are unchanged afterwards.
+- [ ] P5 🖨️ Printer switched off → press Print TEST0001 → the app shows *failed*; switch on, print again.
+- [ ] P6 🖨️ Download TEST0001 .label → opens in DYMO Label → prints the same label.
+- [ ] P7 🏭 Only after P1–P6 on **both** PCs: set the barcode series (next free number, checked against the
+      workbook and both DYMO counters). Not done during development.
+- [ ] P8 🖨️🏭 One real label per series from PC 1, one from PC 2: each scans as the reserved barcode;
+      the numbers are consecutive across the two PCs; confirm; Excel staging shows each once.
+- [ ] P9 🖨️ Reprint one label → same barcode, nothing new in Excel staging.
+- [ ] P10 🏭 Enter the rows in the workbook, upload a copy, *Check the copy* → synchronised.
+- [ ] P11 🏭 Anyone printing manually in DYMO Label uses a reserved block (Settings → Barcode series).

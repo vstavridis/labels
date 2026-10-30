@@ -23,8 +23,8 @@ jobs:
       # real-file tests are skipped here; run them locally (docs/TESTING.md).
       - run: python -m pytest -q -rs
 
-  registry-postgres:
-    name: barcode registry on PostgreSQL
+  cloud-postgres:
+    name: whole suite on PostgreSQL (cloud database + barcode registry)
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -37,13 +37,51 @@ jobs:
           --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       VSPM_TEST_POSTGRES_URL: postgresql+psycopg://postgres:postgres@localhost:5432/vspm_test
+      VSPM_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/vspm_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev,registry]"
-      - run: python -m pytest -q tests/test_registry_postgres.py tests/test_barcodes.py -rs
+      - run: pip install -e ".[dev,ai,google,registry,cloud]"
+      - run: python -m pytest -q -rs --ignore=tests/browser
+
+  browser-dymo:
+    # Browser-side DYMO printing against a fake DYMO Web Service on https://127.0.0.1:41951,
+    # with the app origin treated as a PUBLIC address (Local Network Access rules of the cloud).
+    name: browser printing (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {name: "Chromium, Linux", os: ubuntu-latest, channel: ""}
+          - {name: "Chrome, Windows", os: windows-latest, channel: chrome}
+          - {name: "Edge, Windows", os: windows-latest, channel: msedge}
+    env:
+      VSPM_TEST_BROWSER_CHANNEL: ${{ matrix.channel }}
+      VSPM_REQUIRE_BROWSER: "1"  # a missing browser fails the job instead of skipping the tests
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" playwright
+      - name: Bundled Chromium (Linux only; Windows uses the installed Chrome / Edge)
+        if: matrix.channel == ''
+        run: python -m playwright install --with-deps chromium
+      - name: Browser versions
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          from playwright.sync_api import sync_playwright
+          with sync_playwright() as p:
+              b = p.chromium.launch(channel=os.environ.get("VSPM_TEST_BROWSER_CHANNEL") or None)
+              print("browser:", os.environ.get("VSPM_TEST_BROWSER_CHANNEL") or "bundled chromium", b.version)
+              b.close()
+          PY
+      - run: python -m pytest -q -rs tests/browser tests/test_browser_print.py
 
   windows-install:
     name: Windows installation and launch
