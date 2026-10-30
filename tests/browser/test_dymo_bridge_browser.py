@@ -13,6 +13,17 @@ from tests.browser.conftest import new_page
 BRIDGE = 'iframe[data-testid="stCustomComponentV1"]'
 
 
+
+def wait_printer_selected(page, bridge=None, name="DYMO LabelWriter Wireless"):
+    """The server recorded this PC's selected printer (visible metric, not a hidden table cell)."""
+    try:
+        page.locator('[data-testid="stMetricValue"]', has_text=name).first.wait_for()
+    except Exception:
+        print("METRICS:", page.locator('[data-testid="stMetricValue"]').all_inner_texts())
+        if bridge is not None:
+            print("BRIDGE:", bridge.locator("body").inner_text()[:1500])
+        raise
+
 def jobs():
     return httpx.get("https://127.0.0.1:41951/__test/jobs", verify=False).json()
 
@@ -31,7 +42,7 @@ def test_service_and_printer_detected_after_allowing_local_network(browser, app_
     # exactly one connected LabelWriter -> selected automatically
     assert bridge.get_by_test_id("printer-select").input_value() == "DYMO LabelWriter Wireless"
     # the server received the diagnostics of THIS browser
-    page.get_by_text("DYMO LabelWriter Wireless").first.wait_for()
+    wait_printer_selected(page, bridge)
     assert jobs() == []
     ctx.close()
 
@@ -60,7 +71,7 @@ def test_print_test0001_then_confirm_verifies_this_pc(browser, app_server, dymo_
     ctx, page = new_page(browser, app_server, allow_local_network=True)
     bridge = open_printer_page(page, app_server)
     bridge.get_by_test_id("service").filter(has_text="βρέθηκε").wait_for()
-    page.get_by_text("DYMO LabelWriter Wireless").first.wait_for()
+    wait_printer_selected(page, bridge)
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     bridge.locator('[data-testid="job-status"][data-state="submitted"]').wait_for()
     page.get_by_text("`submitted`").or_(page.get_by_text("submitted")).first.wait_for()
@@ -88,7 +99,7 @@ def test_print_failure_is_reported_not_retried(browser, app_server, dymo_reset):
     ctx, page = new_page(browser, app_server, allow_local_network=True)
     bridge = open_printer_page(page, app_server)
     bridge.get_by_test_id("service").filter(has_text="βρέθηκε").wait_for()
-    page.get_by_text("DYMO LabelWriter Wireless").first.wait_for()
+    wait_printer_selected(page, bridge)
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     status = bridge.locator('[data-testid="job-status"][data-state="failed"]')
     status.wait_for()

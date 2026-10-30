@@ -9,7 +9,7 @@ import pytest
 from lxml import etree
 
 from tests.browser.conftest import new_page
-from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page
+from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page, wait_printer_selected
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def make_document_row(ctx, weight="496"):
 def verify_this_browser(page, app_server):
     bridge = open_printer_page(page, app_server)
     bridge.get_by_test_id("service").filter(has_text="βρέθηκε").wait_for()
-    page.get_by_text("DYMO LabelWriter Wireless").first.wait_for()
+    wait_printer_selected(page, bridge)
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     bridge.locator('[data-testid="job-status"][data-state="submitted"]').wait_for()
     page.get_by_role("button", name=re.compile("Ναι — σωστή ετικέτα")).click()
