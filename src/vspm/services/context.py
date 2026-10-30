@@ -150,7 +150,7 @@ def build_context(s: Settings) -> AppContext:
     try:
         if s.drive_mode == DriveMode.google:
             source = GoogleDriveSource(s.drive_folder_id, s.google_auth, s.resolve(s.google_credentials_file),
-                                       s.resolve(s.google_token_file))
+                                       s.resolve(s.google_token_file), s.google_credentials_json)
         elif s.drive_mode == DriveMode.local:
             source = LocalFolderSource(s.resolve(s.local_scan_dir))
         else:

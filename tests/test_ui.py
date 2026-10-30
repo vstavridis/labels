@@ -28,7 +28,7 @@ def env(settings, monkeypatch):
         "VSPM_EXCEL_WRITE_ENABLED": "true", "VSPM_EXCEL_PATH": str(settings.excel_path),
         "VSPM_TEMPLATE_DIR": str(settings.template_dir), "VSPM_TEMPLATES_CONFIG": str(settings.templates_config),
         "VSPM_CUSTOMERS_CONFIG": str(settings.customers_config), "VSPM_LANGUAGE": "el",
-        "VSPM_DATABASE_URL": settings.database_url,
+        "VSPM_DATABASE_URL": settings.database_url, "VSPM_REQUIRE_AUTH": "false",
     }.items():
         monkeypatch.setenv(k, v)
     from vspm.ui.common import get_context
@@ -79,3 +79,39 @@ def test_print_button_prints_one_label_and_records_excel(env):
     lab = ctx.repo.label_for_row(r.id)
     assert lab is not None and lab["excel_status"] == "synchronized"
     assert len(ctx.writer.find_barcodes([lab["barcode"]])[lab["barcode"]]) == 1
+
+
+def test_barcode_series_needs_typed_confirmation(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("VSPM_BARCODE_MODE", "database")
+    if not env.database_url:
+        monkeypatch.setenv("VSPM_REGISTRY_DATABASE_URL", f"sqlite:///{tmp_path / 'reg.sqlite3'}")
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = run_page("settings_page")
+
+    def fill_and_save(typed: str):
+        at.number_input[0].set_value(7030)  # next number (template VS is preselected)
+        at.number_input[1].set_value(3)  # digits
+        next(t for t in at.text_input if "επιβεβαίωση" in t.label.lower()).set_value(typed)
+        next(b for b in at.button if b.proto.form_id == "init_series").click().run()
+
+    fill_and_save("VS7031")  # does not match the preview VS7030: refused
+    assert not at.exception, [e.value for e in at.exception]
+    assert get_context().allocator.sequences() == []
+    fill_and_save("VS7030")
+    assert not at.exception, [e.value for e in at.exception]
+    seqs = get_context().allocator.sequences()
+    assert [(q["series"], q["next_value"]) for q in seqs] == [("VS", 7030)]
+
+
+def test_non_admin_cannot_change_templates_or_series(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("VSPM_REQUIRE_AUTH", "true")  # signed-in employee who is not an admin
+    monkeypatch.setenv("VSPM_BARCODE_MODE", "database")
+    if not env.database_url:
+        monkeypatch.setenv("VSPM_REGISTRY_DATABASE_URL", f"sqlite:///{tmp_path / 'reg.sqlite3'}")
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = run_page("settings_page")
+    assert not at.number_input  # no series form
+    assert not any(b.proto.form_id in ("upload_template", "init_series", "observe", "block") for b in at.button)
+    assert sum("VSPM_ADMIN_EMAILS" in i.value for i in at.info) >= 2

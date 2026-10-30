@@ -12,6 +12,7 @@ import streamlit as st
 
 st.set_page_config(page_title="VS Production Manager", page_icon="🏷️", layout="wide")
 
+from vspm.ui import auth  # noqa: E402
 from vspm.ui.common import CSS, T, get_context, lang  # noqa: E402
 from vspm.ui.views import (  # noqa: E402
     dashboard, history, label_print, printer_page, recognition, review, settings_page,
@@ -20,6 +21,7 @@ from vspm.ui.views import (  # noqa: E402
 st.markdown(CSS, unsafe_allow_html=True)
 ctx = get_context()
 lang()
+access = auth.gate(ctx.settings)  # stops here unless the employee is signed in (cloud)
 
 with st.sidebar:
     st.markdown(f"### 🏷️ {T('app_title')}")
@@ -30,7 +32,13 @@ with st.sidebar:
         if new != st.session_state["lang"]:
             st.session_state["lang"] = new
             st.rerun()
-    st.text_input(T("operator"), key="operator", value=st.session_state.get("operator", ctx.settings.operator_name))
+    if access.status == "ok":
+        st.markdown(f"👤 **{access.name}**  \n{access.email}" + (" · admin" if access.admin else ""))
+        if st.button(T("auth_logout"), key="logout"):
+            st.logout()
+    else:
+        st.text_input(T("operator"), key="operator",
+                      value=st.session_state.get("operator", ctx.settings.operator_name))
     s = ctx.settings
     st.caption(f"Drive: {s.drive_mode.value} · AI: {s.ocr_provider.value} · "
                f"DYMO: {s.printer_mode.value} · Barcodes: {s.barcode_mode.value} · Excel: {s.excel_mode.value}")

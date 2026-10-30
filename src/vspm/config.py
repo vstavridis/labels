@@ -7,6 +7,7 @@ import re
 from enum import Enum
 from functools import lru_cache
 from pathlib import Path
+from typing import Optional
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -71,6 +72,7 @@ class Settings(BaseSettings):
     drive_folder_id: str = ""
     google_auth: str = "service_account"
     google_credentials_file: Path = Path("credentials/google_service_account.json")
+    google_credentials_json: str = ""  # service-account key content (cloud secrets) instead of the file
     google_token_file: Path = Path("credentials/google_token.json")
     local_scan_dir: Path = Path("reference_files/scans")
 
@@ -103,6 +105,10 @@ class Settings(BaseSettings):
     # PostgreSQL for ALL application state (required on Streamlit Community Cloud, whose disk is
     # temporary). Empty = local SQLite file in the data folder.
     database_url: str = ""
+    # Employee login (Streamlit OIDC). None = required whenever VSPM_DATABASE_URL is set (cloud).
+    require_auth: Optional[bool] = None
+    allowed_emails: str = ""  # comma-separated employee e-mails
+    admin_emails: str = ""  # may upload templates and initialise barcode series (also allowed to log in)
     # Barcode tables for VSPM_BARCODE_MODE=database; empty = the same database as VSPM_DATABASE_URL.
     registry_database_url: str = ""
     pilot_ranges: str = ""
@@ -199,8 +205,11 @@ class Settings(BaseSettings):
         d = self.model_dump()
         d["anthropic_api_key"] = "set" if self.anthropic_api_key else "not set"
         d["registry_api_key"] = "set" if self.registry_api_key else "not set"
+        d["google_credentials_json"] = "set" if self.google_credentials_json else "not set"
         d["database_url"] = "PostgreSQL (set)" if self.database_url else "local SQLite"
         d["registry_database_url"] = "set" if self.registry_database_url else "same as database_url"
+        d["allowed_emails"] = f"{len([e for e in self.allowed_emails.split(',') if e.strip()])} e-mail(s)"
+        d["admin_emails"] = f"{len([e for e in self.admin_emails.split(',') if e.strip()])} e-mail(s)"
         return {k: str(v.value if isinstance(v, Enum) else v) for k, v in d.items()}
 
 

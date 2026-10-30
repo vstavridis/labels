@@ -11,6 +11,73 @@ STRINGS: dict[str, tuple[str, str]] = {
     "nav_print": ("Ετικέτα & εκτύπωση", "Label & print"),
     "nav_history": ("Ιστορικό", "History"),
     "nav_printer": ("Εκτυπωτής DYMO", "DYMO printer"),
+    "auth_misconfigured": ("Η σύνδεση εργαζομένων δεν έχει ρυθμιστεί — η εφαρμογή παραμένει κλειστή.",
+                           "Employee login is not configured - the app stays closed."),
+    "auth_login_needed": ("Συνδεθείτε με τον λογαριασμό εργασίας σας.", "Sign in with your work account."),
+    "auth_login": ("Σύνδεση", "Sign in"),
+    "auth_denied": ("Ο λογαριασμός {e} δεν έχει πρόσβαση.", "The account {e} has no access."),
+    "auth_logout": ("Αποσύνδεση", "Sign out"),
+    "dymo_templates": ("Πρότυπα DYMO", "DYMO templates"),
+    "excel_cloud_note": ("Στο cloud η εφαρμογή δεν γράφει στο Σχισμενα.xlsx του OneDrive. Οι ετικέτες μένουν εδώ "
+                         "«σε αναμονή Excel»: κατεβάστε τις γραμμές, περάστε τις στο βιβλίο και ανεβάστε ένα αντίγραφο "
+                         "για έλεγχο.",
+                         "On the cloud the app does not write the OneDrive Σχισμενα.xlsx. Labels stay here as "
+                         "'waiting for Excel': download the rows, enter them in the workbook and upload a copy to "
+                         "check."),
+    "reconcile_upload": ("Αντίγραφο του Σχισμενα.xlsx (από το OneDrive) για έλεγχο καταχώρησης",
+                         "Copy of Σχισμενα.xlsx (from OneDrive) to check what is already entered"),
+    "reconcile_uploaded": ("Έλεγχος αντιγράφου", "Check the copy"),
+    "barcode_series": ("Σειρές barcode", "Barcode series"),
+    "cloud_settings_readonly": ("Στο cloud οι ρυθμίσεις ορίζονται στα Secrets της φιλοξενίας (Streamlit Cloud → "
+                                "App settings → Secrets). Εδώ εμφανίζονται μόνο για έλεγχο.",
+                                "On the cloud, settings come from the hosting secrets (Streamlit Cloud → App "
+                                "settings → Secrets). They are shown here read-only."),
+    "admin_only": ("Μόνο οι διαχειριστές (VSPM_ADMIN_EMAILS) μπορούν να αλλάξουν αυτά.",
+                   "Only administrators (VSPM_ADMIN_EMAILS) can change these."),
+    "templates_help": ("Τα πρότυπα .label φυλάσσονται στη βάση (όχι στο δημόσιο repository). Κάθε έκδοση κρατιέται: "
+                       "οι επανεκτυπώσεις χρησιμοποιούν την έκδοση με την οποία τυπώθηκε η ετικέτα.",
+                       "The .label templates are kept in the database (not in the public repository). Every version "
+                       "is kept: reprints use the version the label was printed with."),
+    "template_source": ("Προέλευση", "Source"),
+    "upload_label_file": ("Αρχείο .label από το DYMO Label", ".label file from DYMO Label"),
+    "upload": ("Ανέβασμα", "Upload"),
+    "template_uploaded": ("Το πρότυπο {k} ενεργοποιήθηκε ({s}…). Τυπώστε TEST0001 για να το ελέγξετε.",
+                          "Template {k} is now active ({s}…). Print TEST0001 to check it."),
+    "template_versions": ("Όλες οι εκδόσεις", "All versions"),
+    "series_other_mode": ("Οι σειρές διαχειρίζονται εδώ μόνο με VSPM_BARCODE_MODE=database (τώρα: {m}).",
+                          "Series are managed here only with VSPM_BARCODE_MODE=database (now: {m})."),
+    "series_help": ("Η κοινή βάση δίνει κάθε αριθμό μία φορά, σε όλους τους υπολογιστές. Ο μετρητής (COUNTER) του "
+                    "προτύπου DYMO δεν χρησιμοποιείται για τις ετικέτες της εφαρμογής.",
+                    "The shared database issues every number once, for all computers. The DYMO template COUNTER "
+                    "is not used for labels printed by the app."),
+    "series_none": ("Καμία σειρά δεν έχει οριστεί: η εκτύπωση νέων ετικετών είναι κλειστή μέχρι να οριστεί.",
+                    "No series initialised: printing new labels is closed until one is set."),
+    "series_set": ("Ορισμός επόμενου αριθμού", "Set next number"),
+    "series_set_help": ("Βάλτε τον ΕΠΟΜΕΝΟ ελεύθερο αριθμό (μεγαλύτερο από κάθε barcode που έχει ήδη τυπωθεί, και "
+                        "χειροκίνητα). Δεν μπορεί να μετακινηθεί προς τα πίσω.",
+                        "Enter the NEXT free number (higher than every barcode already printed, manual ones "
+                        "included). It can never move backwards."),
+    "series_next": ("Επόμενος αριθμός", "Next number"),
+    "series_width": ("Ψηφία", "Digits"),
+    "series_confirm": ("Πληκτρολογήστε το barcode για επιβεβαίωση", "Type the barcode to confirm"),
+    "series_preview": ("Το επόμενο barcode θα είναι **{b}**", "The next barcode will be **{b}**"),
+    "series_confirm_mismatch": ("Η επιβεβαίωση πρέπει να είναι ακριβώς {b}", "The confirmation must be exactly {b}"),
+    "series_next_positive": ("Ο αριθμός πρέπει να είναι μεγαλύτερος από 0", "The number must be greater than 0"),
+    "series_saved": ("Αποθηκεύτηκε: επόμενο barcode {b}", "Saved: next barcode {b}"),
+    "observe_title": ("Δήλωση barcode που τυπώθηκαν χειροκίνητα", "Report manually printed barcodes"),
+    "observe_help": ("Barcode που τύπωσε κάποιος με τον μετρητή του DYMO: καταχωρούνται ώστε να μη δοθούν ποτέ ξανά.",
+                     "Barcodes someone printed with the DYMO counter: recorded so they are never issued again."),
+    "observe_codes": ("Barcode (ένα ανά γραμμή ή με κενά)", "Barcodes (one per line or space-separated)"),
+    "observe_submit": ("Καταχώρηση", "Record"),
+    "observe_done": ("Καταχωρήθηκαν {n}, ήδη γνωστά {a}, μη έγκυρα {i}", "Recorded {n}, already known {a}, invalid {i}"),
+    "block_title": ("Δέσμευση μπλοκ για χειροκίνητη εκτύπωση", "Reserve a block for manual printing"),
+    "block_help": ("Συνεχόμενοι αριθμοί για όποιον τυπώνει ακόμη από το DYMO Label: ορίστε τον μετρητή του "
+                   "προτύπου στον πρώτο αριθμό του μπλοκ.",
+                   "Consecutive numbers for anyone still printing from DYMO Label: set the template counter to the "
+                   "first number of the block."),
+    "block_count": ("Πλήθος", "Count"),
+    "block_submit": ("Δέσμευση", "Reserve"),
+    "block_done": ("Δεσμεύτηκαν {f} – {l}", "Reserved {f} – {l}"),
     "nav_settings": ("Ρυθμίσεις", "Settings"),
     "language": ("Γλώσσα", "Language"),
     "operator": ("Χειριστής", "Operator"),

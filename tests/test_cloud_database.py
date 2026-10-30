@@ -111,3 +111,22 @@ def test_same_row_from_two_instances_gets_one_label(settings, tmp_path):
     assert len(results) == 1 and len(errors) == 1, (results, errors)
     assert a.db.one("SELECT COUNT(*) FROM labels WHERE production_row_id=?", (rid,))[0] == 1
     assert len(a.allocator.find_by_ref(a.production.production_ref(a.repo.get_row(rid)))) == 1
+
+
+def test_cloud_excel_staging_and_reconcile_from_uploaded_copy(settings, tmp_path):
+    ctx = build_context(db_settings(settings, tmp_path, excel_mode="staging"))
+    init_series(ctx)
+    before = settings.excel_path.read_bytes()
+    out = ctx.production.print_and_save(make_row(ctx))
+    assert settings.excel_path.read_bytes() == before  # the app never wrote the workbook
+    lab = ctx.repo.get_label(out.label_id)
+    assert lab["excel_status"] == "staged"
+    # The employee enters the row in OneDrive, then uploads a copy: the app only READS it.
+    copy = build_context(with_settings(settings, excel_mode="direct", barcode_mode="mock",
+                                       database_url="", data_dir=tmp_path / "other", excel_require_test_copy=False))
+    copy.writer.append([ctx.production._payload(lab)])
+    with pytest.raises(ProductionError, match="could not be read"):
+        ctx.production.reconcile(b"not a workbook")
+    res = ctx.production.reconcile(settings.excel_path.read_bytes(), source="uploaded copy")
+    assert res["synchronized"] == [out.barcode]
+    assert ctx.repo.get_label(out.label_id)["excel_status"] == "synchronized"

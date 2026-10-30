@@ -10,6 +10,7 @@ dist/
 
 # Secrets and local configuration
 .env
+.streamlit/secrets.toml
 *.env.local
 credentials/
 *.json.key

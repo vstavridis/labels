@@ -611,25 +611,31 @@ class ProductionService:
         return self.db.query("SELECT * FROM labels WHERE excel_status IN ('pending','staged','error','conflict') "
                              "ORDER BY id")
 
-    def reconcile(self) -> dict[str, list[str]]:
-        """Read the workbook (read-only) and mark staged/failed labels that are present as synchronized."""
+    def reconcile(self, workbook: bytes | None = None, source: str | None = None) -> dict[str, list[str]]:
+        """Read the workbook (read-only) and mark staged/failed labels that are present as synchronized.
+
+        `workbook`: bytes of an uploaded copy (cloud: the server cannot open the OneDrive file)."""
         labs = self.db.query("SELECT * FROM labels WHERE excel_status IN ('pending','staged','error','conflict',"
                              "'queued_remote')")
         if not labs:
             return {"synchronized": [], "missing": [], "duplicates": []}
-        found = self.writer.find_barcodes([l["barcode"] for l in labs])
+        try:
+            found = self.writer.find_barcodes([l["barcode"] for l in labs], workbook)
+        except Exception as e:
+            raise ProductionError(f"Workbook could not be read: {e}") from e
+        where = source or str(self.writer.path)
         out = {"synchronized": [], "missing": [], "duplicates": []}
         for l in labs:
             rows = found.get(l["barcode"], [])
             if len(rows) == 1:
                 self.repo.update_label(l["id"], excel_status=ExcelStatus.synchronized.value, excel_row_number=rows[0])
                 self.repo.add_excel_attempt(l["id"], mode="reconcile", status="already_present", row_number=rows[0],
-                                            workbook_path=str(self.writer.path))
+                                            workbook_path=where)
                 out["synchronized"].append(l["barcode"])
             elif len(rows) > 1:
                 self.repo.update_label(l["id"], excel_status=ExcelStatus.conflict.value)
                 self.repo.add_excel_attempt(l["id"], mode="reconcile", status="conflict",
-                                            error=f"barcode appears in rows {rows}", workbook_path=str(self.writer.path))
+                                            error=f"barcode appears in rows {rows}", workbook_path=where)
                 out["duplicates"].append(f"{l['barcode']} rows {rows}")
             else:
                 out["missing"].append(l["barcode"])

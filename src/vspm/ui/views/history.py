@@ -84,17 +84,21 @@ def render() -> None:
     pending = ctx.production.pending_excel_labels()
     st.caption(f"{len(pending)} · mode: {ctx.settings.excel_mode.value} · "
                f"workbook: {ctx.writer.path} · writes {'enabled' if ctx.settings.excel_write_enabled else 'disabled'}")
-    problems = ctx.writer.preflight()
-    for p in problems:
-        st.warning(p)
+    cloud = bool(ctx.settings.database_url)
+    if cloud:
+        st.info(T("excel_cloud_note"))
+    else:
+        for p in ctx.writer.preflight():
+            st.warning(p)
     c1, c2, c3 = st.columns(3)
-    if c1.button(T("apply_now"), width="stretch", disabled=not pending or not ctx.settings.excel_write_enabled):
+    if c1.button(T("apply_now"), width="stretch",
+                 disabled=cloud or not pending or not ctx.settings.excel_write_enabled):
         res = ctx.production.apply_staged(None, operator())
         for lid, msgs in res.items():
             for m in msgs:
                 flash("info", f"#{lid}: {m}")
         st.rerun()
-    if c2.button(T("reconcile"), width="stretch"):
+    if not cloud and c2.button(T("reconcile"), width="stretch"):
         try:
             res = ctx.production.reconcile()
             flash("success", f"✔ {len(res['synchronized'])} · missing {len(res['missing'])} · "
@@ -102,6 +106,17 @@ def render() -> None:
         except Exception as e:
             flash("error", str(e))
         st.rerun()
+    if cloud or not ctx.writer.path.exists():
+        # The server cannot open the OneDrive workbook: check an uploaded copy (read-only).
+        up = st.file_uploader(T("reconcile_upload"), type=["xlsx", "xlsm"], key="reconcile_file")
+        if up is not None and st.button(T("reconcile_uploaded"), type="primary", key="reconcile_uploaded"):
+            try:
+                res = ctx.production.reconcile(up.getvalue(), source=f"uploaded copy {up.name}")
+                flash("success", f"✔ {len(res['synchronized'])} · missing {len(res['missing'])} · "
+                                 f"duplicates {res['duplicates']}")
+            except Exception as e:
+                flash("error", str(e))
+            st.rerun()
     if pending:
         with tempfile.TemporaryDirectory() as td:
             p = Path(td) / "pending.xlsx"

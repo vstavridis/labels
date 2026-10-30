@@ -200,9 +200,11 @@ class SafeWorkbookWriter:
         except OSError as e:
             raise WorkbookUnavailableError(f"Cannot read workbook: {e}") from e
 
-    def find_barcodes(self, barcodes: list[str]) -> dict[str, list[int]]:
-        """Read-only lookup of barcodes in column H (used for reconciliation)."""
-        editor = SheetEditor(XlsxPackage(self.read_bytes()), self.sheet)
+    def find_barcodes(self, barcodes: list[str], data: bytes | None = None) -> dict[str, list[int]]:
+        """Read-only lookup of barcodes in column H (used for reconciliation).
+
+        `data`: an uploaded copy of the workbook (cloud) instead of the configured file."""
+        editor = SheetEditor(XlsxPackage(data if data is not None else self.read_bytes()), self.sheet)
         values = editor.column_values("H")
         wanted = {b.strip().upper(): b for b in barcodes}
         found: dict[str, list[int]] = {b: [] for b in barcodes}

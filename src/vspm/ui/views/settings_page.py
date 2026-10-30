@@ -9,7 +9,9 @@ from vspm.config import PROJECT_ROOT
 from vspm.domain.models import TemplateKey
 from vspm.envfile import read_env, update_env
 from vspm.services.customers import CustomerRule
+from vspm.ui.auth import is_admin
 from vspm.ui.common import T, flash, get_context, reload_context, show_flash
+from vspm.ui.views import settings_admin
 
 ENV_FIELDS = [
     ("VSPM_DRIVE_MODE", ["google", "local", "mock"]),
@@ -21,13 +23,13 @@ ENV_FIELDS = [
     ("VSPM_OCR_MODEL", None),
     ("VSPM_OCR_EFFORT", ["low", "medium", "high", "xhigh", "max"]),
     ("VSPM_OCR_UPLOAD_CONSENT", ["false", "true"]),
-    ("VSPM_PRINTER_MODE", ["mock", "dymo_web", "cups", "dymo_com"]),
+    ("VSPM_PRINTER_MODE", ["mock", "dymo_web", "cups", "dymo_com", "browser"]),
     ("VSPM_CUPS_OPTIONS", None),
     ("VSPM_PRINTER_NAME", None),
     ("VSPM_DYMO_WEB_URL", None),
     ("VSPM_TEMPLATE_DIR", None),
     ("VSPM_TEMPLATES_CONFIG", None),
-    ("VSPM_BARCODE_MODE", ["disabled", "mock", "pilot_range", "registry"]),
+    ("VSPM_BARCODE_MODE", ["disabled", "mock", "pilot_range", "registry", "database"]),
     ("VSPM_REGISTRY_URL", None),
     ("VSPM_PILOT_RANGES", None),
     ("VSPM_EXCEL_PATH", None),
@@ -45,39 +47,22 @@ def render() -> None:
     ctx = get_context()
     show_flash()
     st.title(T("nav_settings"))
-    tabs = st.tabs([T("env_settings"), T("customer_rules"), T("integration_checks"), T("logs")])
+    tabs = st.tabs([T("env_settings"), T("customer_rules"), T("integration_checks"), T("logs"),
+                    T("dymo_templates"), T("barcode_series")])
     env_path = PROJECT_ROOT / ".env"
+    with tabs[4]:
+        settings_admin.templates_tab(ctx)
+    with tabs[5]:
+        settings_admin.series_tab(ctx)
 
     with tabs[0]:
-        st.caption(f"{env_path} — {T('restart_note')}")
-        current = read_env(env_path)
-        effective = ctx.settings.describe()
-        new: dict[str, str] = {}
-        with st.form("env"):
-            cols = st.columns(2)
-            for i, (key, options) in enumerate(ENV_FIELDS):
-                attr = key.removeprefix("VSPM_").lower()
-                val = current.get(key, effective.get(attr, ""))
-                col = cols[i % 2]
-                if options:
-                    val_l = str(val).lower() if options[0].islower() else str(val)
-                    new[key] = col.selectbox(key, options, index=options.index(val_l) if val_l in options else 0)
-                else:
-                    new[key] = col.text_input(key, value=str(val))
-            st.markdown("**Secrets** (left empty = unchanged)")
-            for key in SECRETS:
-                v = st.text_input(f"{key} ({'set' if current.get(key) else 'not set'})", type="password")
-                if v:
-                    new[key] = v
-            if st.form_submit_button(T("save"), type="primary"):
-                update_env(env_path, new)
-                flash("success", T("saved") + " " + T("restart_note"))
-                st.rerun()
-        if st.button("🔄 " + T("reload")):
-            from vspm.config import get_settings
-            get_settings.cache_clear()
-            reload_context()
-            st.rerun()
+        if ctx.settings.database_url:
+            # Cloud: configuration comes from the hosting secrets; the container disk is temporary
+            # and employees must not change server settings from the page.
+            st.info(T("cloud_settings_readonly"))
+            st.json(ctx.settings.describe(), expanded=True)
+        else:
+            _env_editor(ctx, env_path)
 
     with tabs[1]:
         st.caption("Χαμηλότερη προτεραιότητα = ελέγχεται πρώτη. match: exact | contains | regex. "
@@ -93,7 +78,7 @@ def render() -> None:
             "match": st.column_config.SelectboxColumn(options=["exact", "contains", "regex"]),
             "template": st.column_config.SelectboxColumn(options=[k.value for k in TemplateKey]),
         }, key=f"rules{len(rules)}")
-        if st.button(T("save"), key="save_rules", type="primary"):
+        if st.button(T("save"), key="save_rules", type="primary", disabled=not is_admin()):
             try:
                 kept = set()
                 for _, r in edited.iterrows():
@@ -154,3 +139,35 @@ def render() -> None:
         st.dataframe([dict(r) for r in ctx.db.query(
             "SELECT ts, actor, computer, entity, entity_id, action, details_json FROM audit_log ORDER BY id DESC "
             "LIMIT 300")], hide_index=True, width="stretch")
+
+
+def _env_editor(ctx, env_path) -> None:
+    st.caption(f"{env_path} — {T('restart_note')}")
+    current = read_env(env_path)
+    effective = ctx.settings.describe()
+    new: dict[str, str] = {}
+    with st.form("env"):
+        cols = st.columns(2)
+        for i, (key, options) in enumerate(ENV_FIELDS):
+            attr = key.removeprefix("VSPM_").lower()
+            val = current.get(key, effective.get(attr, ""))
+            col = cols[i % 2]
+            if options:
+                val_l = str(val).lower() if options[0].islower() else str(val)
+                new[key] = col.selectbox(key, options, index=options.index(val_l) if val_l in options else 0)
+            else:
+                new[key] = col.text_input(key, value=str(val))
+        st.markdown("**Secrets** (left empty = unchanged)")
+        for key in SECRETS:
+            v = st.text_input(f"{key} ({'set' if current.get(key) else 'not set'})", type="password")
+            if v:
+                new[key] = v
+        if st.form_submit_button(T("save"), type="primary"):
+            update_env(env_path, new)
+            flash("success", T("saved") + " " + T("restart_note"))
+            st.rerun()
+    if st.button("🔄 " + T("reload")):
+        from vspm.config import get_settings
+        get_settings.cache_clear()
+        reload_context()
+        st.rerun()

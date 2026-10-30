@@ -44,7 +44,8 @@ class GoogleDriveSource:
     name = "google"
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-    def __init__(self, folder_id: str, auth: str, credentials_file: Path, token_file: Path):
+    def __init__(self, folder_id: str, auth: str, credentials_file: Path, token_file: Path,
+                 credentials_json: str = ""):
         if not folder_id:
             raise DocumentSourceError("VSPM_DRIVE_FOLDER_ID is not set")
         self.folder_id = folder_id
@@ -52,7 +53,19 @@ class GoogleDriveSource:
             from googleapiclient.discovery import build  # type: ignore
         except ImportError as e:
             raise DocumentSourceError("Google libraries missing: pip install -e .[google]") from e
-        creds = self._credentials(auth, Path(credentials_file), Path(token_file))
+        if credentials_json:  # Streamlit Cloud: the service-account key comes from the secrets, not a file
+            if auth != "service_account":
+                raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON works only with VSPM_GOOGLE_AUTH=service_account")
+            import json
+
+            from google.oauth2 import service_account  # type: ignore
+            try:
+                info = json.loads(credentials_json)
+            except ValueError as e:
+                raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON is not valid JSON") from e
+            creds = service_account.Credentials.from_service_account_info(info, scopes=self.SCOPES)
+        else:
+            creds = self._credentials(auth, Path(credentials_file), Path(token_file))
         self.service = build("drive", "v3", credentials=creds, cache_discovery=False)
 
     def _credentials(self, auth: str, credentials_file: Path, token_file: Path):
