@@ -2,3 +2,5 @@
 *.ps1 text eol=crlf
 *.label binary
 *.xlsx binary
+# Byte-exact files: never convert line endings (Windows checkouts would change their SHA-256).
+src/vspm/ui/dymo_bridge/static/** -text

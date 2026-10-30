@@ -227,3 +227,24 @@ def test_counter_can_be_removed_from_automated_labels(settings, clock):
     job = c.browser.create_test_job("EX", "s", "t")
     root = etree.fromstring(job.label_xml.encode("utf-8"))
     assert list(root.iter("CounterObject")) == [] and check_prepared_label(job.label_xml, TEST_BARCODE) == []
+
+
+def test_simultaneous_first_reports_from_one_station_do_not_crash(ctx):
+    """Two tabs/reruns of a new PC report at the same moment (seen on CI: UNIQUE constraint failed)."""
+    import threading
+    errors, barrier = [], threading.Barrier(8)
+    value = {"report_id": "x", "station_id": "new-station", "station_name": "ΑΠΟΘΗΚΗ",
+             "diagnostics": {"service_present": True, "selected_printer": PRINTER, "printers": []}, "results": []}
+
+    def go():
+        barrier.wait()
+        try:
+            ctx.browser.apply_report(dict(value), "tester")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=go) for _ in range(8)]
+    [t.start() for t in threads]
+    [t.join() for t in threads]
+    assert errors == []
+    assert ctx.browser.station("new-station")["printer_name"] == PRINTER

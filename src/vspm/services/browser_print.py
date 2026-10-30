@@ -217,10 +217,6 @@ class BrowserPrintService:
         d = value.get("diagnostics") or {}
         now = utcnow()
         name = str(value.get("station_name") or "")[:40]
-        existing = self.db.one("SELECT station_id FROM print_stations WHERE station_id=?", (station_id,))
-        if existing is None:
-            self.db.execute("INSERT INTO print_stations (station_id, name, last_seen, last_user) VALUES (?,?,?,?)",
-                            (station_id, name, now, user))
         fields = {"name": name, "last_seen": now, "last_user": user}
         if d:
             fields.update(user_agent=str(d.get("user_agent", ""))[:300],
@@ -229,7 +225,12 @@ class BrowserPrintService:
                           diagnostics_json=json.dumps(d, ensure_ascii=False)[:20000],
                           printer_name=str(d.get("selected_printer") or "")[:200])
         sets = ", ".join(f"{k}=?" for k in fields)
-        self.db.execute(f"UPDATE print_stations SET {sets} WHERE station_id=?", (*fields.values(), station_id))
+        # One transaction, insert-if-missing: two reports from the same PC at the same moment (two tabs,
+        # two reruns) must not both try to create the station row.
+        with self.db.transaction() as conn:
+            conn.execute("INSERT INTO print_stations (station_id, name, last_seen, last_user) VALUES (?,?,?,?) "
+                         "ON CONFLICT(station_id) DO NOTHING", (station_id, name, now, user))
+            conn.execute(f"UPDATE print_stations SET {sets} WHERE station_id=?", (*fields.values(), station_id))
 
     def station(self, station_id: str):
         return self.db.one("SELECT * FROM print_stations WHERE station_id=?", (station_id,))

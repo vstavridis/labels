@@ -49,15 +49,19 @@ def verify_this_browser(page, app_server):
 
 
 def open_print_page(page, app_server, doc_name_part="BROWSER_TEST_"):
-    # A sidebar click made while Streamlit is still drawing the previous page can be ignored: retry.
-    for attempt in range(3):
+    # A sidebar click made while Streamlit is still drawing the previous page can be ignored, and a late
+    # report from the previous page's bridge can rerun that page: retry until the print page stays.
+    for attempt in range(4):
         page.get_by_role("link", name=re.compile("Ετικέτα & εκτύπωση")).click()
         try:
             page.get_by_text("Επιλογή εγγράφου").first.wait_for(timeout=15000)
-            break
+            page.wait_for_timeout(1500)
+            if page.get_by_text("Επιλογή εγγράφου").first.is_visible():
+                break
         except Exception:
-            if attempt == 2:
-                raise
+            pass
+        if attempt == 3:
+            raise AssertionError("could not open the print page")
     page.locator(BRIDGE).first.wait_for()
     return page.frame_locator(BRIDGE).first
 
