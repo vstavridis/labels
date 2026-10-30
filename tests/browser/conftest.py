@@ -69,6 +69,7 @@ def app_server(tmp_path_factory):
            "VSPM_TEMPLATE_DIR": str(FIXTURES / "labels"), "VSPM_CUSTOMERS_CONFIG": str(FIXTURES / "customers.yaml"),
            "VSPM_REQUIRE_AUTH": "false", "VSPM_LANGUAGE": "el", "PYTHONUTF8": "1"}
     log_path = d / "streamlit.log"
+    _SERVER_LOG[:] = [log_path]
     log = open(log_path, "wb")
     proc = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", str(ROOT / "src" / "vspm" / "ui" / "app.py"),
@@ -122,11 +123,41 @@ def dymo_reset(fake_dymo):
     yield fake_dymo
 
 
+_OPEN_CONTEXTS: list = []
+_SERVER_LOG: list = []
+
+
 def new_page(browser, app_server, allow_local_network: bool):
     ctx = browser.new_context(ignore_https_errors=True, locale="el-GR")
+    _OPEN_CONTEXTS.append(ctx)
     if allow_local_network:
         # What the employee does once when Chrome/Edge asks: "Allow".
         ctx.grant_permissions(["local-network-access"], origin=app_server["url"])
     page = ctx.new_page()
     page.set_default_timeout(45000)
     return ctx, page
+
+
+@pytest.hookimpl(hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    """On a failure, print what every open page showed and the end of the server log (CI diagnosis)."""
+    outcome = yield
+    rep = outcome.get_result()
+    if rep.when == "call" and rep.failed:
+        out = []
+        for ctx in list(_OPEN_CONTEXTS):
+            try:
+                for i, page in enumerate(ctx.pages):
+                    out.append(f"--- page {i} {page.url}")
+                    out.append(f"errors: {page.locator('[data-testid=\"stException\"]').all_inner_texts()}")
+                    out.append(f"alerts: {page.locator('[data-testid=\"stAlert\"]').all_inner_texts()[:10]}")
+                    out.append(page.locator("body").inner_text()[:2500])
+            except Exception as e:  # context already closed
+                out.append(f"(page not readable: {e})")
+        if _SERVER_LOG and _SERVER_LOG[0].exists():
+            out.append("--- server log (end)")
+            out.append(_SERVER_LOG[0].read_text(encoding="utf-8", errors="replace")[-3000:])
+        rep.sections.append(("browser state at failure", "\n".join(out)))
+    if rep.when == "teardown":
+        _OPEN_CONTEXTS.clear()
+
