@@ -1,4 +1,36 @@
-# Test results — 29/10/2026 (commit `5fe59f4` and later)
+# Test results
+
+## Hosted app with browser printing — 30/10/2026 (branch `claude/browser-dymo-printing`)
+
+CI run: <https://github.com/vstavridis/labels/actions/runs/40985867812> — all 8 jobs green.
+
+| Job | Result |
+|---|---|
+| tests on Ubuntu, macOS, Windows | passed |
+| whole suite on PostgreSQL 16 (app database, registry, two app instances on one database) | passed |
+| browser printing — bundled Chromium 156, Linux | 29 passed |
+| browser printing — **Google Chrome 156**, Windows | 29 passed |
+| browser printing — **Microsoft Edge 155**, Windows | 29 passed |
+| Windows installation and launch | passed |
+
+Locally (Linux): 176 passed on SQLite, 183 on PostgreSQL 16, 30 browser/print tests.
+
+Defects found while bringing CI to green (all fixed, with regression tests where possible):
+
+* two tabs of one browser could submit the same print job twice (the bridge checked the job state before
+  taking its lock, not inside it);
+* a button click could be swallowed by a rerun triggered by the bridge's report (now handled in callbacks);
+* two simultaneous first reports from one PC crashed the page (`UNIQUE constraint failed: print_stations`);
+* on Windows checkouts Git changed the line endings of the vendored DYMO framework, so its checksum failed;
+* test harness: the test server's log pipe filled up on Windows and the server stopped answering.
+
+The browser tests had intermittent timing failures on the CI runners before these fixes; the green run above
+is the first one with all of them in place. Nothing here involved a real DYMO printer, a real DYMO Web
+Service, Streamlit Community Cloud or a real login provider — see Part 4 of PILOT_CHECKLIST.md.
+
+---
+
+## Local pilot installation — 29/10/2026 (commit `5fe59f4` and later)
 
 ## 1. Automated test suite
 
