@@ -9,7 +9,7 @@ import pytest
 from lxml import etree
 
 from tests.browser.conftest import new_page
-from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page, wait_printer_selected
+from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page, wait_printer_selected, wait_station_verified
 
 
 @pytest.fixture
@@ -45,7 +45,7 @@ def verify_this_browser(page, app_server):
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     bridge.locator('[data-testid="job-status"][data-state="submitted"]').wait_for()
     page.get_by_role("button", name=re.compile("Ναι — σωστή ετικέτα")).click()
-    page.get_by_text("επιβεβαιώθηκαν").first.wait_for()
+    wait_station_verified(page)
 
 
 def open_print_page(page, app_server, doc_name_part="BROWSER_TEST_"):

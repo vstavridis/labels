@@ -14,6 +14,12 @@ BRIDGE = 'iframe[data-testid="stCustomComponentV1"]'
 
 
 
+def wait_station_verified(page):
+    """The lasting result (metric "Verified ✅"), not the short success message a rerun may clear."""
+    page.locator('[data-testid="stMetric"]', has_text="Επιβεβαιωμένος").locator(
+        '[data-testid="stMetricValue"]', has_text="✅").first.wait_for()
+
+
 def wait_printer_selected(page, bridge=None, name="DYMO LabelWriter Wireless"):
     """The server recorded this PC's selected printer (visible metric, not a hidden table cell)."""
     try:
@@ -89,7 +95,7 @@ def test_print_test0001_then_confirm_verifies_this_pc(browser, app_server, dymo_
     assert "<Copies>1</Copies>" in job["print_params"]
 
     page.get_by_role("button", name=re.compile("Ναι — σωστή ετικέτα")).click()
-    page.get_by_text("επιβεβαιώθηκαν").first.wait_for()
+    wait_station_verified(page)
     assert len(jobs()) == 1  # confirming and the reruns it causes never print again
     ctx.close()
 
