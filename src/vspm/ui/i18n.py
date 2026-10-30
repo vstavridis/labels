@@ -85,6 +85,34 @@ STRINGS: dict[str, tuple[str, str]] = {
     "test_failed_note": ("Καταγράφηκε. Δείτε τον οδηγό αντιμετώπισης προβλημάτων πριν από νέα δοκιμή.",
                          "Recorded. See the troubleshooting guide before trying again."),
     "all_stations": ("Όλοι οι υπολογιστές", "All computers"),
+    "station_not_verified": ("Αυτός ο υπολογιστής/εκτυπωτής δεν έχει επιβεβαιωθεί. Ανοίξτε τη σελίδα «Εκτυπωτής DYMO», "
+                             "τυπώστε TEST0001 και επιβεβαιώστε το αποτέλεσμα.",
+                             "This computer/printer is not verified yet. Open the 'DYMO printer' page, print TEST0001 "
+                             "and confirm the result."),
+    "sending_to_this_pc": ("Η ετικέτα στέλνεται στον DYMO αυτού του υπολογιστή…",
+                           "The label is being sent to this computer's DYMO…"),
+    "previous_unknown": ("Η προηγούμενη αποστολή της {b} δεν απάντησε (π.χ. έκλεισε η σελίδα). Ελέγξτε τον εκτυπωτή: "
+                         "βγήκε η ετικέτα;",
+                         "The previous print request for {b} got no answer (e.g. the page was closed). Check the "
+                         "printer: did the label come out?"),
+    "it_came_out": ("Ναι, βγήκε σωστά", "Yes, it came out correctly"),
+    "not_out_print_again": ("Όχι — εκτύπωση ξανά (ίδιο barcode)", "No — print again (same barcode)"),
+    "use_reprint": ("OK - χρησιμοποιήστε «Επανεκτύπωση» (ίδιο barcode).", "OK - use Reprint (same barcode)."),
+    "manual_fallback": ("Η εκτύπωση από τον browser δεν λειτουργεί; Λήψη αρχείου .label",
+                        "Browser printing not working? Download the .label file"),
+    "manual_fallback_help": ("Το αρχείο περιέχει την έτοιμη ετικέτα με το ΔΕΣΜΕΥΜΕΝΟ barcode (χωρίς σύνδεση με τον "
+                             "μετρητή DYMO). Ανοίξτε το στο DYMO Label v8, ΜΗΝ αλλάξετε τίποτα, τυπώστε 1 αντίτυπο και "
+                             "επιβεβαιώστε εδώ.",
+                             "The file contains the prepared label with the RESERVED barcode (not linked to the DYMO "
+                             "counter). Open it in DYMO Label v8, change NOTHING, print 1 copy and confirm here."),
+    "reserve_for_manual": ("Δέσμευση barcode για χειροκίνητη εκτύπωση", "Reserve the barcode for manual printing"),
+    "download_label": ("Λήψη {b}.label", "Download {b}.label"),
+    "manual_confirm_question": ("Τυπώσατε το {b}.label από το DYMO Label v8 και βγήκε σωστά με barcode {b};",
+                                "Did you print {b}.label from DYMO Label v8 and did it come out correctly with "
+                                "barcode {b}?"),
+    "manual_printed_ok": ("Ναι, τυπώθηκε σωστά", "Yes, printed correctly"),
+    "manual_not_printed": ("Όχι, δεν τυπώθηκε", "No, not printed"),
+    "browser_jobs": ("Εργασίες εκτύπωσης browser", "Browser print jobs"),
     "go_review": ("Μετάβαση στον έλεγχο", "Go to review"),
     "page": ("Σελίδα", "Page"),
     # review

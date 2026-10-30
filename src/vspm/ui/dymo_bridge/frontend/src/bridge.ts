@@ -474,6 +474,15 @@ async function runJob(job: Job, userInitiated: boolean): Promise<void> {
       return flush();
     }
     const doPrint = async () => {
+      // Re-checked while holding the job lock: another frame or tab of this browser may have
+      // submitted (or started submitting) this job while we were preparing it.
+      const now = store.get<JobState | null>("job." + key, null);
+      if (now) {
+        const final = now.status !== "printing";
+        currentJobView = { job, state: final ? now.status : "uncertain", message: t(final ? "already" : "uncertain"),
+                           problems: [] };
+        return;
+      }
       // Recorded BEFORE submitting: a reload during submission can never print twice.
       if (!store.set("job." + key, { status: "printing", printer: diag.selected_printer, at: new Date().toISOString() })) {
         throw new Error("browser storage unavailable: refusing to print without duplicate protection");
@@ -493,9 +502,8 @@ async function runJob(job: Job, userInitiated: boolean): Promise<void> {
     };
     const locks: any = (navigator as any).locks;
     if (locks && locks.request) {
-      await locks.request("vspm-job-" + key, { ifAvailable: true }, async (lock: any) => {
-        if (lock) await doPrint();
-      });
+      // Waits for a frame/tab that is submitting the same job, then re-checks inside doPrint().
+      await locks.request("vspm-job-" + key, async () => { await doPrint(); });
     } else {
       await doPrint();
     }

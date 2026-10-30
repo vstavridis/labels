@@ -33,10 +33,15 @@ def render() -> None:
     cur = st.session_state.get("row_id")
     row_id = st.selectbox(T("select_row"), ids, index=ids.index(cur) if cur in ids else 0, format_func=fmt)
     st.session_state["row_id"] = row_id
+    browser_mode = ctx.settings.printer_mode.value == "browser"
+    left, right = st.columns([3, 2])
+    if browser_mode:
+        from vspm.ui.views.browser_actions import bridge_section
+        with right:
+            bridge_section(ctx)  # first: the browser's report updates the label status shown below
     row = ctx.repo.get_row(row_id)
     label = ctx.repo.label_for_row(row_id)
 
-    left, right = st.columns([3, 2])
     with right:
         spec = ctx.templates.spec(row.template_key) if row.template_key else None
         if label:
@@ -66,7 +71,10 @@ def render() -> None:
         if label and label["excel_row_number"]:
             st.caption(f"Excel row {label['excel_row_number']}")
 
-        if not label:
+        if browser_mode:
+            from vspm.ui.views.browser_actions import browser_actions
+            browser_actions(ctx, row, row_id, label)
+        elif not label:
             errors = ctx.production.check_printable(row)
             if errors:
                 st.warning(T("not_printable") + "\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in errors.items()))
@@ -120,16 +128,16 @@ def render() -> None:
                     except ProductionError as e:
                         flash("error", str(e))
                     st.rerun()
-            if label["excel_status"] in ("pending", "staged", "error", "conflict"):
-                if st.button("📗 " + T("retry_excel"), width="stretch"):
-                    if label["excel_status"] == "staged":
-                        res = ctx.production.apply_staged([label["id"]], operator())
-                        msgs = res.get(label["id"], [])
-                    else:
-                        msgs = ctx.production.sync_excel(label["id"], operator())
-                    for m in msgs:
-                        flash("info", m)
-                    st.rerun()
+        if label is not None and label["excel_status"] in ("pending", "staged", "error", "conflict"):
+            if st.button("📗 " + T("retry_excel"), width="stretch"):
+                if label["excel_status"] == "staged":
+                    res = ctx.production.apply_staged([label["id"]], operator())
+                    msgs = res.get(label["id"], [])
+                else:
+                    msgs = ctx.production.sync_excel(label["id"], operator())
+                for m in msgs:
+                    flash("info", m)
+                st.rerun()
     with left:
         try:
             png, _, _ = ctx.production.preview(row)

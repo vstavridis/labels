@@ -159,6 +159,7 @@ def build_context(s: Settings) -> AppContext:
                      registry_client, problems)
     ctx.browser = BrowserPrintService(db, templates, counter_mode=s.dymo_counter_mode)
     production.browser = ctx.browser
+    ctx.browser.on_label_result = production.apply_browser_result
     try:
         ctx.recovery_notes = production.recover()
     except Exception as e:

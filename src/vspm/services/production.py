@@ -56,6 +56,9 @@ MESSAGES = {
     "excel_present": ("Excel: υπάρχει ήδη στη γραμμή {n} (επαληθεύτηκε).", "Excel: already present at row {n} (verified)."),
     "excel_failed": ("Το Excel ΔΕΝ ενημερώθηκε ({st}): {e}. Η ετικέτα είναι ασφαλής· δοκιμάστε ξανά αργότερα.",
                      "Excel NOT updated ({st}): {e}. The label is safe; retry later."),
+    "manual_recorded": ("Η εκτύπωση επιβεβαιώθηκε από τον χειριστή.", "Print confirmed by the operator."),
+    "print_uncertain": ("{b}: άγνωστο αν τυπώθηκε (η σελίδα ανανεώθηκε κατά την αποστολή). Ελέγξτε τον εκτυπωτή.",
+                        "{b}: unknown whether it printed (page reloaded while sending). Check the printer."),
     "rec_queued": ("{b}: η καταχώρηση Excel μπήκε σε αναμονή μετά από επανεκκίνηση",
                    "{b}: Excel entry queued after restart"),
     "rec_reserved": ("{b}: ο αριθμός δεσμεύτηκε αλλά δεν τυπώθηκε (πατήστε ξανά Εκτύπωση & Αποθήκευση)",
@@ -88,6 +91,20 @@ class PossibleDuplicate(ProductionError):
 
 class PrintInProgress(ProductionError):
     pass
+
+
+class StationNotVerified(ProductionError):
+    pass
+
+
+class PreviousPrintUnknown(ProductionError):
+    """An earlier print request for this label got no answer: it may or may not have printed."""
+
+    def __init__(self, barcode: str, job_keys: list[str]):
+        super().__init__(f"An earlier print request for {barcode} got no answer from the browser. Check the "
+                         "printer: did the label come out?")
+        self.barcode = barcode
+        self.job_keys = job_keys
 
 
 PRINT_LOCK_SECONDS = 120
@@ -205,6 +222,16 @@ class ProductionService:
 
     def print_and_save(self, row_id: int, operator: Optional[str] = None,
                        allow_possible_duplicate: bool = False) -> Outcome:
+        op, _ = self._who(operator)
+        label = self.prepare_label(row_id, op, allow_possible_duplicate)
+        # Resume (or first attempt) of printing with the reserved number.
+        return self._print(label, kind="initial", operator=op)
+
+    def prepare_label(self, row_id: int, operator: Optional[str] = None,
+                      allow_possible_duplicate: bool = False):
+        """Validate the row, reserve its barcode and COMMIT the label row (idempotent).
+
+        Returns the label row. Raises AlreadyPrinted if the row was printed before."""
         op, pc = self._who(operator)
         row = self.repo.get_row(row_id)
         if row is None:
@@ -214,7 +241,6 @@ class ProductionService:
                 PrintStatus.print_submitted.value, PrintStatus.print_unconfirmed.value,
                 PrintStatus.printed_confirmed.value, PrintStatus.print_failed_confirmed.value):
             raise AlreadyPrinted(f"Row already printed as {label['barcode']}. Use 'Reprint' instead.")
-
         if label is None:
             errors = self.check_printable(row)
             if errors:
@@ -230,8 +256,7 @@ class ProductionService:
             content = build_label_content(row, spec, self.transforms, res.barcode)
             label_id = self._create_label(row, res, content, op, pc, template_sha256=tpl.sha256)
             label = self.repo.get_label(label_id)
-        # Resume (or first attempt) of printing with the reserved number.
-        return self._print(label, kind="initial", operator=op)
+        return label
 
     def _reserve(self, row: ProductionRow, series: str, op: str, pc: str) -> Reservation:
         key = self.barcode_key(row.id)
@@ -296,38 +321,54 @@ class ProductionService:
 
     def _print_locked(self, label, kind: str, operator: str) -> Outcome:
         op, pc = self._who(operator)
-        lid = label["id"]
         xml = self._label_xml(label)
         self.labels_dir.mkdir(parents=True, exist_ok=True)
         xml_path = self.labels_dir / f"{label['barcode']}.label"
         xml_path.write_text(xml, encoding="utf-8")
         result = self.printer.print_label(xml, self.s.printer_name)
-        self.repo.add_print_attempt(lid, kind=kind, printer_mode=self.printer.mode, printer_name=self.s.printer_name,
-                                    status="submitted" if result.ok else "error", error=result.error,
-                                    job_ref=result.job_ref, operator=op, computer=pc)
+        return self.record_print_outcome(label, kind, result.ok, result.error, result.job_ref, self.printer.mode,
+                                         self.s.printer_name, op, pc, xml_path=str(xml_path))
+
+    def record_print_outcome(self, label, kind: str, ok: bool, error: Optional[str], job_ref: Optional[str],
+                             printer_mode: str, printer_name: Optional[str], operator: str, computer: str,
+                             xml_path: Optional[str] = None, confirmed: bool = False) -> Outcome:
+        """Record one print submission (server printer, browser or manual DYMO Label).
+
+        The first successful submission sets the print date and queues the Excel row;
+        reprints never touch Excel."""
+        op, pc = operator, computer
+        lid = label["id"]
+        label = self.repo.get_label(lid)
+        self.repo.add_print_attempt(lid, kind=kind, printer_mode=printer_mode, printer_name=printer_name or "",
+                                    status=("confirmed_ok" if confirmed else "submitted") if ok else "error",
+                                    error=error, job_ref=job_ref, operator=op, computer=pc)
         msgs: list[str] = []
-        if not result.ok:
-            if kind == "reprint" and label["first_printed_at"]:
+        extra = {"label_xml_path": xml_path} if xml_path else {}
+        if not ok:
+            if label["first_printed_at"]:
                 status = label["print_status"]  # an earlier successful print stays valid
             else:
                 status = PrintStatus.error.value
                 self.repo.set_row_status(label["production_row_id"], RowStatus.error)
-            self.repo.update_label(lid, print_status=status, label_xml_path=str(xml_path))
-            self.db.audit("label", lid, f"{kind}_failed", {"error": result.error}, op, pc)
-            msgs.append(self._m("print_failed", e=result.error))
+            self.repo.update_label(lid, print_status=status, **extra)
+            self.db.audit("label", lid, f"{kind}_failed", {"error": error, "job": job_ref}, op, pc)
+            msgs.append(self._m("print_failed", e=error))
             lab = self.repo.get_label(lid)
             return Outcome(lid, lab["barcode"], lab["print_status"], lab["excel_status"], msgs, False)
 
         first_success = not label["first_printed_at"]
-        fields = dict(print_status=PrintStatus.print_unconfirmed.value, label_xml_path=str(xml_path))
+        new_status = PrintStatus.printed_confirmed if confirmed else PrintStatus.print_unconfirmed
+        fields = dict(print_status=new_status.value, **extra)
         if first_success:
             local = self.now_local()
             fields.update(first_printed_at=self._clock().isoformat(timespec="seconds"),
                           print_date_local=local.date().isoformat())
         self.repo.update_label(lid, **fields)
-        self.repo.set_row_status(label["production_row_id"], RowStatus.print_unconfirmed)
-        self.db.audit("label", lid, f"{kind}_submitted", {"job": result.job_ref, "barcode": label["barcode"]}, op, pc)
-        msgs.append(self._m("sent"))
+        self.repo.set_row_status(label["production_row_id"],
+                                 RowStatus.printed_confirmed if confirmed else RowStatus.print_unconfirmed)
+        self.db.audit("label", lid, f"{kind}_submitted", {"job": job_ref, "barcode": label["barcode"],
+                                                          "printer": printer_name, "mode": printer_mode}, op, pc)
+        msgs.append(self._m("sent") if not confirmed else self._m("manual_recorded"))
         if first_success:
             try:
                 self.allocator.mark(Reservation(label["series"], label["number"], label["barcode"],
@@ -341,6 +382,126 @@ class ProductionService:
             msgs.extend(self.sync_excel(lid, operator=op))
         lab = self.repo.get_label(lid)
         return Outcome(lid, lab["barcode"], lab["print_status"], lab["excel_status"], msgs, True)
+
+    # ---- browser printing (the employee's own PC prints) ----------------------------------
+    def _check_station(self, station_id: Optional[str], printer: Optional[str]) -> None:
+        if self.browser is None:
+            raise ProductionError("Browser printing is not configured")
+        if self.s.require_verified_station and not self.browser.station_verified(station_id, printer):
+            raise StationNotVerified(
+                "This computer/printer has not printed TEST0001 successfully yet. Open the 'DYMO printer' page, "
+                "print TEST0001 and confirm it before printing production labels.")
+
+    def start_browser_print(self, row_id: int, *, session_id: str, station_id: Optional[str],
+                            printer: Optional[str], operator: Optional[str] = None,
+                            allow_possible_duplicate: bool = False, previous_not_printed: bool = False):
+        """Reserve + persist the barcode, then create a print job for THIS browser."""
+        op, _ = self._who(operator)
+        self._check_station(station_id, printer)  # before any number is reserved
+        label = self.prepare_label(row_id, op, allow_possible_duplicate)
+        unknown = self.browser.unanswered_jobs_for_label(label["id"])
+        if unknown and not previous_not_printed:
+            raise PreviousPrintUnknown(label["barcode"], [j["job_key"] for j in unknown])
+        if unknown:
+            self._resolve_unknown(label, unknown, printed=False, operator=op)
+        kind = "retry" if self.repo.print_attempts(label["id"]) else "initial"
+        content = LabelContent.model_validate_json(label["content_json"])
+        return self.browser.create_label_job(label, kind, session_id, op, content)
+
+    def start_browser_reprint(self, label_id: int, *, session_id: str, station_id: Optional[str],
+                              printer: Optional[str], operator: Optional[str] = None):
+        op, _ = self._who(operator)
+        self._check_station(station_id, printer)
+        label = self.repo.get_label(label_id)
+        if label is None:
+            raise ProductionError(f"Label {label_id} not found")
+        if not label["first_printed_at"]:
+            raise ProductionError("This label was never printed: use Print & Save")
+        content = LabelContent.model_validate_json(label["content_json"])
+        return self.browser.create_label_job(label, "reprint", session_id, op, content)
+
+    def apply_browser_result(self, job, result: dict, user: str) -> list[tuple[str, str]]:
+        """Callback from BrowserPrintService for production jobs (idempotent per job)."""
+        label = self.repo.get_label(job["label_id"])
+        status = result.get("status")
+        computer = result.get("station_name") or result.get("station_id") or "browser"
+        if status == "submitted":
+            out = self.record_print_outcome(label, job["kind"], True, None, job["job_key"], "browser",
+                                            result.get("printer"), user, computer)
+            return [("success", f"{label['barcode']}: {m}") for m in out.messages]
+        if status in ("failed", "rejected"):
+            err = result.get("error") or "; ".join(result.get("problems") or []) or status
+            out = self.record_print_outcome(label, job["kind"], False, err, job["job_key"], "browser",
+                                            result.get("printer"), user, computer)
+            return [("error", f"{label['barcode']}: {m}") for m in out.messages]
+        if status == "uncertain":
+            return [("warning", self._m("print_uncertain", b=label["barcode"]))]
+        return [("warning", f"{label['barcode']}: {result.get('error') or status}")]  # not_submitted
+
+    def _resolve_unknown(self, label, jobs, printed: bool, operator: str) -> None:
+        for j in jobs:
+            self.db.execute("UPDATE print_jobs SET status=? WHERE job_key=?",
+                            ("manual_confirmed" if printed else "cancelled", j["job_key"]))
+            self.db.audit("label", label["id"], "unanswered_print_resolved",
+                          {"job": j["job_key"], "printed": printed}, operator)
+
+    def confirm_unanswered_printed(self, label_id: int, operator: Optional[str] = None) -> Outcome:
+        """The operator checked the printer: the label of an unanswered job DID come out."""
+        op, pc = self._who(operator)
+        label = self.repo.get_label(label_id)
+        unknown = self.browser.unanswered_jobs_for_label(label_id)
+        if not unknown:
+            raise ProductionError("No unanswered print request for this label")
+        self._resolve_unknown(label, unknown, printed=True, operator=op)
+        return self.record_print_outcome(label, unknown[-1]["kind"], True, None, unknown[-1]["job_key"],
+                                         "browser", unknown[-1]["printer_name"], op, pc, confirmed=True)
+
+    # ---- manual fallback: download the prepared .label and print it in DYMO Label v8 ---------
+    def manual_label_file(self, label_id: int) -> tuple[str, bytes]:
+        """(file name, bytes) of the exact prepared label with the reserved barcode (nothing recorded)."""
+        if self.browser is None:
+            raise ProductionError("Browser printing is not configured")
+        label = self.repo.get_label(label_id)
+        content = LabelContent.model_validate_json(label["content_json"])
+        job = self.browser.prepare("manual", TemplateKey(label["template_key"]), content, label["number"],
+                                   label["id"], "")
+        return f"{label['barcode']}.label", job.label_xml.encode("utf-8")
+
+    def record_manual_download(self, label_id: int, operator: Optional[str] = None) -> str:
+        """The operator downloaded the .label file to print it in DYMO Label v8."""
+        op, _ = self._who(operator)
+        existing = self.db.one("SELECT job_key FROM print_jobs WHERE label_id=? AND status='manual_pending'",
+                               (label_id,))
+        if existing is not None:
+            return existing["job_key"]
+        label = self.repo.get_label(label_id)
+        _, data = self.manual_label_file(label_id)
+        from vspm.dymo.template import xml_sha256
+        key = uuid.uuid4().hex
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO print_jobs (job_key, kind, label_id, template_key, barcode, xml_sha256, status, "
+                "created_by, created_at) VALUES (?,?,?,?,?,?, 'manual_pending', ?, ?)",
+                (key, "manual", label_id, label["template_key"], label["barcode"], xml_sha256(data.decode("utf-8")),
+                 op, utcnow()))
+            self.db.audit("label", label_id, "manual_label_downloaded", {"job": key}, op, conn=conn)
+        return key
+
+    def confirm_manual_print(self, label_id: int, printed_ok: bool, operator: Optional[str] = None) -> Outcome:
+        """Operator printed the downloaded .label in DYMO Label v8 and checked the result."""
+        op, pc = self._who(operator)
+        label = self.repo.get_label(label_id)
+        job = self.db.one("SELECT * FROM print_jobs WHERE label_id=? AND status='manual_pending'", (label_id,))
+        if job is None:
+            raise ProductionError("Download the .label file first")
+        self.db.execute("UPDATE print_jobs SET status=?, reported_at=? WHERE job_key=?",
+                        ("manual_confirmed" if printed_ok else "cancelled", utcnow(), job["job_key"]))
+        kind = "manual_reprint" if label["first_printed_at"] else "manual"
+        if not printed_ok:
+            return self.record_print_outcome(label, kind, False, "not printed (operator)", job["job_key"],
+                                             "manual_dymo_label", None, op, pc)
+        return self.record_print_outcome(label, kind, True, None, job["job_key"], "manual_dymo_label", None, op, pc,
+                                         confirmed=True)
 
     def reprint(self, label_id: int, operator: Optional[str] = None) -> Outcome:
         label = self.repo.get_label(label_id)

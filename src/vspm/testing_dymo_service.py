@@ -23,7 +23,6 @@ Run standalone:  python -m vspm.testing_dymo_service --port 41951
 from __future__ import annotations
 
 import argparse
-import base64
 import datetime as dt
 import json
 import ssl

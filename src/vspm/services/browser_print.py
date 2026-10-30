@@ -145,6 +145,8 @@ class BrowserPrintService:
 
     def unanswered_jobs_for_label(self, label_id: int):
         """Jobs that may or may not have printed (expired without answer or 'uncertain')."""
+        with self.db.transaction() as conn:
+            self._expire_stale(conn)  # a pending job past its timeout counts as unanswered NOW
         return self.db.query("SELECT * FROM print_jobs WHERE label_id=? AND status IN ('expired','uncertain') "
                              "ORDER BY id", (label_id,))
 
@@ -179,10 +181,15 @@ class BrowserPrintService:
             return []  # already recorded (idempotent: re-sent from the browser's outbox)
         msgs: list[tuple[str, str]] = []
         if str(r.get("barcode")) != job["barcode"]:
-            status, r = "rejected", {**r, "error": f"browser reported barcode {r.get('barcode')} for job "
-                                                  f"{job['barcode']}"}
-        if status == "submitted" and r.get("xml_sha256") != job["xml_sha256"]:
-            msgs.append(("error", "The browser printed content that differs from the prepared label (SHA-256)."))
+            # Never record a print for a barcode other than the reserved one.
+            status = "rejected"
+            r = {**r, "status": status, "error": f"browser reported barcode {r.get('barcode')} for job "
+                                                 f"{job['barcode']}"}
+        elif status == "submitted" and r.get("xml_sha256") != job["xml_sha256"]:
+            # Something other than the prepared label may have been printed: the operator must check.
+            status = "uncertain"
+            r = {**r, "status": status, "error": "printed content differs from the prepared label (SHA-256)"}
+            msgs.append(("error", "The browser reported content that differs from the prepared label (SHA-256)."))
         self.db.execute(
             "UPDATE print_jobs SET status=?, station_id=?, printer_name=?, reported_at=?, browser_sha256=?, error=?, "
             "result_json=? WHERE job_key=? AND status NOT IN ('submitted','failed','rejected','uncertain','expired',"

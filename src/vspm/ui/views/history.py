@@ -47,6 +47,12 @@ def render() -> None:
         st.markdown(f"### {lab['barcode']}")
         c1, c2, c3 = st.columns(3)
         if c1.button("🔁 " + T("reprint"), width="stretch", disabled=not lab["first_printed_at"]):
+            if ctx.settings.printer_mode.value == "browser":
+                # The browser of this PC prints: continue on the print page of that row.
+                st.session_state["row_id"] = lab["production_row_id"]
+                r = ctx.repo.get_row(lab["production_row_id"])
+                st.session_state["doc_id"] = r.document_id if r else None
+                st.switch_page(st.session_state["_pages"]["print"])
             try:
                 out = ctx.production.reprint(lab["id"], operator())
                 for m in out.messages:

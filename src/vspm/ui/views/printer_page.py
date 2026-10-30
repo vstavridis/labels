@@ -12,10 +12,12 @@ from vspm.ui.common import T, flash, get_context, lang, operator, session_id, sh
 from vspm.ui.dymo_bridge import dymo_bridge, framework_ok
 
 
-def process_bridge_value(ctx, value, state_prefix: str) -> None:
-    """Record a browser report once (Streamlit returns the last value on every rerun)."""
+def process_bridge_value(ctx, value, state_prefix: str) -> list[tuple[str, str]]:
+    """Record a browser report once (Streamlit returns the last value on every rerun).
+
+    Never calls st.rerun(): a rerun here would swallow a button click made in the same run."""
     if not value or value.get("report_id") == st.session_state.get(f"{state_prefix}_last_report"):
-        return
+        return []
     st.session_state[f"{state_prefix}_last_report"] = value.get("report_id")
     out = ctx.browser.apply_report(value, operator())
     acked = st.session_state.get("bridge_acked", [])
@@ -24,9 +26,29 @@ def process_bridge_value(ctx, value, state_prefix: str) -> None:
         st.session_state["station_id"] = out.station_id
         st.session_state["station_printer"] = (value.get("diagnostics") or {}).get("selected_printer") or \
             st.session_state.get("station_printer")
-    for level, msg in out.messages:
-        flash(level, msg)
-    st.rerun()
+    return out.messages
+
+
+def show_messages(messages: list[tuple[str, str]]) -> None:
+    for level, msg in messages:
+        getattr(st, level if level in ("success", "info", "warning", "error") else "info")(msg)
+
+
+# Clicks are handled in on_click callbacks: Streamlit runs them before the page script, so a
+# rerun triggered by the browser bridge at the same moment cannot swallow the click.
+def _start_test(ctx, tpl: str) -> None:
+    try:
+        j = ctx.browser.create_test_job(tpl, session_id(), operator())
+        st.session_state["diag_job"] = j.for_browser()
+        st.session_state["diag_job_key"] = j.job_key
+    except BrowserPrintError as e:
+        flash("error", str(e))
+
+
+def _confirm_test(ctx, station_id: str, job_key: str, ok: bool) -> None:
+    ctx.browser.confirm_test_print(station_id, job_key, ok, operator())
+    flash("success" if ok else "warning", T("station_verified") if ok else T("test_failed_note"))
+    st.session_state.pop("diag_job_key", None)
 
 
 def _yes(v) -> str:
@@ -47,7 +69,8 @@ def render() -> None:
         "pending", "not_submitted") else None
     value = dymo_bridge("diagnose", job=job, acked=st.session_state.get("bridge_acked", []), lang=lang(),
                         rescan_token=st.session_state.get("rescan", ""), key="bridge_diag")
-    process_bridge_value(ctx, value, "diag")
+    show_messages(process_bridge_value(ctx, value, "diag"))
+    job_row = ctx.browser.job(job_key) if job_key else None  # may have changed with the report
 
     station_id = st.session_state.get("station_id")
     station = ctx.browser.station(station_id) if station_id else None
@@ -88,15 +111,8 @@ def render() -> None:
     st.caption(T("test_print_help"))
     cols = st.columns([2, 2, 2])
     tpl = cols[0].selectbox(T("template"), [k.value for k in TemplateKey], key="test_tpl")
-    if cols[1].button("🖨️ " + T("print_test"), type="primary", width="stretch",
-                      disabled=station is None or not station["service_present"]):
-        try:
-            j = ctx.browser.create_test_job(tpl, session_id(), operator())
-            st.session_state["diag_job"] = j.for_browser()
-            st.session_state["diag_job_key"] = j.job_key
-        except BrowserPrintError as e:
-            flash("error", str(e))
-        st.rerun()
+    cols[1].button("🖨️ " + T("print_test"), type="primary", width="stretch", key="print_test",
+                   disabled=station is None or not station["service_present"], on_click=_start_test, args=(ctx, tpl))
     try:
         prepared = ctx.browser.prepare("test", TemplateKey(tpl), __import__(
             "vspm.services.browser_print", fromlist=["test_content"]).test_content(TemplateKey(tpl)), 1, None, "")
@@ -114,16 +130,10 @@ def render() -> None:
         if status == "submitted" and job_row["kind"] == "test" and station_id:
             st.info(T("confirm_test_question"))
             b1, b2 = st.columns(2)
-            if b1.button("✅ " + T("test_ok"), width="stretch"):
-                ctx.browser.confirm_test_print(station_id, job_row["job_key"], True, operator())
-                flash("success", T("station_verified"))
-                st.session_state.pop("diag_job_key", None)
-                st.rerun()
-            if b2.button("❌ " + T("test_bad"), width="stretch"):
-                ctx.browser.confirm_test_print(station_id, job_row["job_key"], False, operator())
-                flash("warning", T("test_failed_note"))
-                st.session_state.pop("diag_job_key", None)
-                st.rerun()
+            args = (ctx, station_id, job_row["job_key"])
+            b1.button("✅ " + T("test_ok"), width="stretch", key="test_ok", on_click=_confirm_test, args=args + (True,))
+            b2.button("❌ " + T("test_bad"), width="stretch", key="test_bad", on_click=_confirm_test,
+                      args=args + (False,))
 
     st.subheader(T("all_stations"))
     rows = ctx.browser.stations()

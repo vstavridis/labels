@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 
 import httpx
@@ -93,7 +92,6 @@ def test_print_failure_is_reported_not_retried(browser, app_server, dymo_reset):
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     status = bridge.locator('[data-testid="job-status"][data-state="failed"]')
     status.wait_for()
-    print("BRIDGE SHOWS:", status.inner_text())
     page.get_by_text("failed").first.wait_for()
     assert jobs() == []
     ctx.close()
