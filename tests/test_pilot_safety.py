@@ -57,7 +57,7 @@ def test_same_document_line_on_another_computer_is_flagged(settings, clock, tmp_
     api.put("/v1/sequences/VS", json={"prefix": "VS", "next_value": 11712}, headers={"X-API-Key": "adm"})
 
     def pc(name):
-        s = with_settings(settings, data_dir=tmp_path / name / "data", computer_name=name,
+        s = with_settings(settings, data_dir=tmp_path / name / "data", computer_name=name, database_url="",
                           excel_path=settings.excel_path, excel_require_test_copy=False)
         c = build_context(s)
         c.production._clock = clock

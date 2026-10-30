@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -37,8 +39,28 @@ def registry(templates_yaml) -> TemplateRegistry:
 
 
 @pytest.fixture
-def settings(tmp_path, templates_yaml, workbook) -> Settings:
-    return Settings(
+def pg_url():
+    """Fresh PostgreSQL schema per test when VSPM_TEST_DATABASE_URL is set (whole suite on PostgreSQL)."""
+    base = os.environ.get("VSPM_TEST_DATABASE_URL", "")
+    if not base:
+        yield ""
+        return
+    import psycopg
+    schema = "t_" + uuid.uuid4().hex[:12]
+    with psycopg.connect(base, autocommit=True) as c:
+        c.execute(f"CREATE SCHEMA {schema}")
+    sep = "&" if "?" in base else "?"
+    url = f"{base}{sep}options=-csearch_path%3D{schema}"
+    yield url
+    from vspm.db.postgres import close_pools
+    close_pools(url)
+    with psycopg.connect(base, autocommit=True) as c:
+        c.execute(f"DROP SCHEMA {schema} CASCADE")
+
+
+@pytest.fixture
+def settings(tmp_path, templates_yaml, workbook, pg_url) -> Settings:
+    return Settings(database_url=pg_url, 
         _env_file=None, data_dir=tmp_path / "data", drive_mode="mock", ocr_provider="mock", barcode_mode="mock",
         printer_mode="mock", excel_mode="direct", excel_write_enabled=True, excel_path=workbook,
         templates_config=templates_yaml, template_dir=FIXTURES / "labels", language="en",

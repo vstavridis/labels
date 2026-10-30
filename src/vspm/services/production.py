@@ -293,7 +293,8 @@ class ProductionService:
         key = TemplateKey(label["template_key"])
         spec = self.templates.spec(key)
         content = LabelContent.model_validate_json(label["content_json"])
-        return self.templates.load(key).populate(spec, content, label["number"])
+        tpl = self.templates.load_version(key, label["template_sha256"]) or self.templates.load(key)
+        return tpl.populate(spec, content, label["number"])
 
     def _claim_print_lock(self, label_id: int) -> bool:
         """Only one print job per label at a time (e.g. two browser tabs)."""
@@ -464,7 +465,7 @@ class ProductionService:
         label = self.repo.get_label(label_id)
         content = LabelContent.model_validate_json(label["content_json"])
         job = self.browser.prepare("manual", TemplateKey(label["template_key"]), content, label["number"],
-                                   label["id"], "")
+                                   label["id"], "", template_sha256=label["template_sha256"])
         return f"{label['barcode']}.label", job.label_xml.encode("utf-8")
 
     def record_manual_download(self, label_id: int, operator: Optional[str] = None) -> str:

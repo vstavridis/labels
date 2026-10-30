@@ -43,6 +43,7 @@ class BarcodeMode(str, Enum):
     mock = "mock"
     pilot_range = "pilot_range"
     registry = "registry"
+    database = "database"
 
 
 class ExcelMode(str, Enum):
@@ -99,6 +100,11 @@ class Settings(BaseSettings):
     barcode_mode: BarcodeMode = BarcodeMode.disabled
     registry_url: str = "http://localhost:8765"
     registry_api_key: str = ""
+    # PostgreSQL for ALL application state (required on Streamlit Community Cloud, whose disk is
+    # temporary). Empty = local SQLite file in the data folder.
+    database_url: str = ""
+    # Barcode tables for VSPM_BARCODE_MODE=database; empty = the same database as VSPM_DATABASE_URL.
+    registry_database_url: str = ""
     pilot_ranges: str = ""
 
     excel_path: Path = Path("data/test_workbook/Σχισμενα.xlsx")
@@ -193,6 +199,8 @@ class Settings(BaseSettings):
         d = self.model_dump()
         d["anthropic_api_key"] = "set" if self.anthropic_api_key else "not set"
         d["registry_api_key"] = "set" if self.registry_api_key else "not set"
+        d["database_url"] = "PostgreSQL (set)" if self.database_url else "local SQLite"
+        d["registry_database_url"] = "set" if self.registry_database_url else "same as database_url"
         return {k: str(v.value if isinstance(v, Enum) else v) for k, v in d.items()}
 
 

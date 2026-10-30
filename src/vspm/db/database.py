@@ -16,7 +16,43 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
-class Database:
+class DatabaseBase:
+    """Helpers shared by the SQLite and PostgreSQL backends."""
+
+    backend = "sqlite"
+
+    def query(self, sql: str, params: tuple | dict = ()) -> list:
+        with self.connect() as conn:
+            return list(conn.execute(sql, params))
+
+    def one(self, sql: str, params: tuple | dict = ()):
+        rows = self.query(sql, params)
+        return rows[0] if rows else None
+
+    def audit(self, entity: str, entity_id: Any, action: str, details: dict | None = None,
+              actor: str | None = None, computer: str | None = None, conn=None) -> None:
+        params = (utcnow(), actor, computer, entity, str(entity_id), action,
+                  json.dumps(details or {}, ensure_ascii=False, default=str))
+        sql = ("INSERT INTO audit_log (ts, actor, computer, entity, entity_id, action, details_json) "
+               "VALUES (?,?,?,?,?,?,?)")
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            self.execute(sql, params)
+
+    def get_setting(self, key: str, default: str | None = None) -> str | None:
+        r = self.one("SELECT value FROM app_settings WHERE key=?", (key,))
+        return r["value"] if r else default
+
+    def set_setting(self, key: str, value: str) -> None:
+        self.execute(
+            "INSERT INTO app_settings(key, value, updated_at) VALUES (?,?,?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
+            (key, value, utcnow()),
+        )
+
+
+class Database(DatabaseBase):
     def __init__(self, path: Path | str):
         self.path = Path(path) if str(path) != ":memory:" else path
         if isinstance(self.path, Path):
@@ -81,42 +117,22 @@ class Database:
                 applied.append(f.stem)
         return applied
 
-    # ---- small helpers ----------------------------------------------------
-    def query(self, sql: str, params: tuple | dict = ()) -> list[sqlite3.Row]:
-        with self.connect() as conn:
-            return list(conn.execute(sql, params))
-
-    def one(self, sql: str, params: tuple | dict = ()) -> sqlite3.Row | None:
-        rows = self.query(sql, params)
-        return rows[0] if rows else None
-
     def execute(self, sql: str, params: tuple | dict = ()) -> int:
         with self.transaction() as conn:
             cur = conn.execute(sql, params)
             return cur.lastrowid
 
-    def audit(self, entity: str, entity_id: Any, action: str, details: dict | None = None,
-              actor: str | None = None, computer: str | None = None,
-              conn: sqlite3.Connection | None = None) -> None:
-        params = (utcnow(), actor, computer, entity, str(entity_id), action,
-                  json.dumps(details or {}, ensure_ascii=False, default=str))
-        sql = ("INSERT INTO audit_log (ts, actor, computer, entity, entity_id, action, details_json) "
-               "VALUES (?,?,?,?,?,?,?)")
-        if conn is not None:
-            conn.execute(sql, params)
-        else:
-            self.execute(sql, params)
+    def close(self) -> None:
+        if self._memory_conn is not None:
+            self._memory_conn.close()
 
-    def get_setting(self, key: str, default: str | None = None) -> str | None:
-        r = self.one("SELECT value FROM app_settings WHERE key=?", (key,))
-        return r["value"] if r else default
 
-    def set_setting(self, key: str, value: str) -> None:
-        self.execute(
-            "INSERT INTO app_settings(key, value, updated_at) VALUES (?,?,?) "
-            "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at",
-            (key, value, utcnow()),
-        )
+def open_database(path: Path | str, url: str | None = None) -> DatabaseBase:
+    """PostgreSQL when a URL is configured (cloud), otherwise the local SQLite file."""
+    if url:
+        from vspm.db.postgres import PostgresDatabase
+        return PostgresDatabase(url)
+    return Database(path)
 
 
 def _split_sql(script: str) -> list[str]:

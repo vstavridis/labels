@@ -92,9 +92,13 @@ class BrowserPrintService:
              self._clock().isoformat(timespec="seconds")))
 
     def prepare(self, kind: str, template_key: TemplateKey, content: LabelContent, number: int,
-                label_id: Optional[int], title: str) -> PreparedJob:
+                label_id: Optional[int], title: str, template_sha256: Optional[str] = None) -> PreparedJob:
+        """Populate the template. With `template_sha256` (the version the label was first prepared
+        with) that exact version is used, so reprints keep the original design; the current
+        template is used only when that version is no longer available."""
         spec = self.templates.spec(template_key)
-        xml = self.templates.load(template_key).populate(spec, content, number, counter_mode=self.counter_mode)
+        tpl = self.templates.load_version(template_key, template_sha256) or self.templates.load(template_key)
+        xml = tpl.populate(spec, content, number, counter_mode=self.counter_mode)
         problems = check_prepared_label(xml, content.barcode)
         if problems:
             raise BrowserPrintError("; ".join(problems))
@@ -118,7 +122,7 @@ class BrowserPrintService:
         if lab is None or lab["barcode"] != content.barcode:
             raise BrowserPrintError("the label and its reserved barcode must be saved before printing")
         job = self.prepare(kind, TemplateKey(lab["template_key"]), content, lab["number"], lab["id"],
-                           f"{lab['template_key']} {lab['barcode']}")
+                           f"{lab['template_key']} {lab['barcode']}", template_sha256=lab["template_sha256"])
         try:
             with self.db.transaction() as conn:
                 self._expire_stale(conn)

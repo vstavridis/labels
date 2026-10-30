@@ -8,13 +8,14 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from vspm.barcodes.allocator import (
+    DatabaseRegistryAllocator,
     BarcodeAllocator, DisabledAllocator, LocalRangeAllocator, RegistryAllocator,
 )
 from vspm.config import BarcodeMode, DriveMode, OcrProvider as OcrMode, PrinterMode, Settings
-from vspm.db.database import Database
+from vspm.db.database import DatabaseBase, open_database
 from vspm.db.repository import Repository
 from vspm.dymo.printers import CupsPrinter, DymoComPrinter, DymoWebServicePrinter, LabelPrinter, MockPrinter
-from vspm.dymo.template import TemplateRegistry, parse_template_files
+from vspm.dymo.template import TemplateStore, TemplateRegistry, parse_template_files
 from vspm.excel.writer import SafeWorkbookWriter
 from vspm.integrations.documents import (
     DocumentSource, GoogleDriveSource, LocalFolderSource, MockSource,
@@ -34,7 +35,7 @@ MOCK_RANGES = {"VS": (990000, 999999), "PG": (990000, 999999), "PG0": (99000, 99
 @dataclass
 class AppContext:
     settings: Settings
-    db: Database
+    db: DatabaseBase
     repo: Repository
     customers: CustomerService
     templates: TemplateRegistry
@@ -75,7 +76,7 @@ def build_context(s: Settings) -> AppContext:
     problems: dict[str, str] = {}
     if s.synced_folder_warning():
         problems["data_dir"] = s.synced_folder_warning()
-    db = Database(s.db_path)
+    db = open_database(s.db_path, s.database_url or None)
     repo = Repository(db)
     customers = CustomerService(db, s.resolve(s.customers_config))
     if not s.resolve(s.customers_config).exists() and not customers.rules():
@@ -87,6 +88,7 @@ def build_context(s: Settings) -> AppContext:
         problems["template_files"] = str(e)
         overrides = {}
     templates = TemplateRegistry.from_yaml(s.resolve(s.templates_config), s.resolve(s.template_dir), overrides)
+    templates.store = TemplateStore(db)  # uploaded templates (Settings) take precedence over files
     for key in templates.specs:
         try:
             templates.load(key)
@@ -105,6 +107,11 @@ def build_context(s: Settings) -> AppContext:
             if registry_client is None:
                 raise RuntimeError("VSPM_REGISTRY_URL and VSPM_REGISTRY_API_KEY are required for registry mode")
             allocator = registry_client
+        elif s.barcode_mode == BarcodeMode.database:
+            url = s.registry_database_url or s.database_url
+            if not url:
+                raise RuntimeError("VSPM_BARCODE_MODE=database needs VSPM_DATABASE_URL (the shared PostgreSQL)")
+            allocator = DatabaseRegistryAllocator(url)
         elif s.barcode_mode == BarcodeMode.pilot_range:
             ranges = s.parsed_pilot_ranges()
             if not ranges:

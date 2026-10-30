@@ -7,7 +7,10 @@ mock         Local test numbers from 990000 up. NEVER for real labels.
 pilot_range  Local allocation inside number ranges reserved exclusively for this
              PC (agreed with everyone who prints with DYMO manually).
 registry     Central transactional registry service (PostgreSQL), shared by all
-             computers. Recommended for production.
+             computers, reached over HTTP (vspm-registry).
+database     The same registry rules and tables, used directly in the app's
+             PostgreSQL (VSPM_DATABASE_URL). For Streamlit Community Cloud: one
+             database, no extra service. Can be mixed with `registry` mode.
 
 All modes are idempotent: reserving twice with the same idempotency key returns
 the same number. When the registry cannot be reached, an error is raised - the
@@ -113,8 +116,8 @@ class LocalRangeAllocator:
                     conn.execute("INSERT INTO local_sequences VALUES (?,?,?,?)", (mode, series, start, end))
                 elif row["max_value"] != end or row["next_value"] < start:
                     # Range changed in configuration: never move backwards.
-                    conn.execute("UPDATE local_sequences SET next_value=MAX(next_value, ?), max_value=? "
-                                 "WHERE mode=? AND series=?", (start, end, mode, series))
+                    conn.execute("UPDATE local_sequences SET next_value=CASE WHEN next_value < ? THEN ? ELSE next_value END, "
+                                 "max_value=? WHERE mode=? AND series=?", (start, start, end, mode, series))
 
     def _to_res(self, r) -> Reservation:
         return Reservation(series=r["series"], number=r["number"],
@@ -164,6 +167,82 @@ class LocalRangeAllocator:
 
     def health(self):
         return True, f"{self.mode}: " + ", ".join(f"{s} {a}-{b}" for s, (a, b) in self.ranges.items())
+
+
+class DatabaseRegistryAllocator:
+    """The registry core (vspm_registry.core) used in-process on a shared database."""
+
+    mode = "database"
+
+    def __init__(self, url: str = "", registry=None):
+        from vspm_registry.core import Registry, make_engine
+
+        self.registry = registry or Registry(make_engine(url))
+
+    def _res(self, d: dict) -> Reservation:
+        return Reservation(series=d["series"], number=d["number"], barcode=d["barcode"],
+                           reservation_id=str(d["id"]), idempotency_key=d["idempotency_key"], mode=self.mode,
+                           status=d["status"])
+
+    def _call(self, fn, *a, **kw):
+        from sqlalchemy.exc import SQLAlchemyError
+        from vspm_registry.core import RegistryConflict, RegistryError
+
+        try:
+            return fn(*a, **kw)
+        except RegistryConflict as e:
+            raise BarcodeUnavailableError(f"Barcode registry: {e}") from e
+        except RegistryError as e:
+            raise BarcodeError(f"Barcode registry: {e}") from e
+        except SQLAlchemyError as e:  # database unreachable: never fall back to local numbers
+            raise BarcodeUnavailableError(f"Barcode database unreachable: {type(e).__name__}") from e
+
+    def reserve(self, series, idempotency_key, *, production_ref, operator, computer) -> Reservation:
+        return self._res(self._call(self.registry.reserve, series, idempotency_key, production_ref=production_ref,
+                                    operator=operator, computer=computer, client_kind="app"))
+
+    def lookup(self, idempotency_key: str) -> Optional[Reservation]:
+        items = self._call(self.registry.find, idempotency_key=idempotency_key, limit=1)
+        return self._res(items[0]) if items else None
+
+    def mark(self, reservation: Reservation, status: str, operator: str) -> None:
+        self._call(self.registry.set_status, int(reservation.reservation_id), status, operator)
+
+    def find_by_ref(self, production_ref: str) -> list[Reservation]:
+        return [self._res(d) for d in self._call(self.registry.find, production_ref=production_ref)]
+
+    def sequences(self) -> list[dict]:
+        return self._call(self.registry.list_sequences)
+
+    def peek(self, series):
+        try:
+            for seq in self.sequences():
+                if seq["series"] == series:
+                    return format_number(seq["prefix"], seq["next_value"], seq["format_width"])
+        except BarcodeError:
+            return None
+        return None
+
+    def health(self):
+        try:
+            self.registry.health()
+            seqs = self.sequences()
+        except Exception as e:  # noqa: BLE001 - reported to the operator, never hidden
+            return False, f"database: {type(e).__name__}"
+        if not seqs:
+            return False, "database: no barcode series initialised yet (Settings - Barcode series)"
+        return True, "database: " + ", ".join(f"{q['series']} next {q['next_value']}" for q in seqs)
+
+    def observe(self, barcodes: list[str], source: str, operator: str, computer: str) -> dict:
+        return self._call(self.registry.observe, barcodes, source, operator, computer)
+
+    def reserve_block(self, series: str, count: int, operator: str, request_id: str, computer: str = "") -> dict:
+        return self._call(self.registry.reserve_block, series, count, operator, request_id, computer)
+
+    def set_sequence(self, series: str, prefix: str, next_value: int, *, format_width: int, operator: str,
+                     max_value: Optional[int] = None) -> dict:
+        return self._call(self.registry.set_sequence, series, prefix, next_value, format_width=format_width,
+                          max_value=max_value, operator=operator)
 
 
 class RegistryAllocator:

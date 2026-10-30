@@ -49,6 +49,68 @@ def parse_template_files(value: str) -> dict[str, str]:
     return out
 
 
+class TemplateStore:
+    """Templates uploaded through the app, stored byte-exact in the database (all versions kept)."""
+
+    def __init__(self, db):
+        self.db = db
+
+    @staticmethod
+    def content(row) -> bytes:
+        import base64
+        return base64.b64decode(row["content_b64"])
+
+    def active(self, key: TemplateKey):
+        return self.db.one("SELECT * FROM label_templates WHERE template_key=? AND active=1 ORDER BY id DESC LIMIT 1",
+                           (TemplateKey(key).value,))
+
+    def by_sha(self, key: TemplateKey, sha256: str) -> bytes | None:
+        row = self.db.one("SELECT * FROM label_templates WHERE template_key=? AND sha256=?",
+                          (TemplateKey(key).value, sha256))
+        return self.content(row) if row else None
+
+    def versions(self, key: TemplateKey | None = None) -> list:
+        sql = ("SELECT id, template_key, sha256, filename, counter_prefix, active, uploaded_by, uploaded_at "
+               "FROM label_templates")
+        if key is None:
+            return self.db.query(sql + " ORDER BY template_key, id DESC")
+        return self.db.query(sql + " WHERE template_key=? ORDER BY id DESC", (TemplateKey(key).value,))
+
+    def upload(self, key: TemplateKey, spec: "TemplateSpec", filename: str, data: bytes, user: str) -> str:
+        """Validate and activate a template. Returns its SHA-256. Raises TemplateError if unusable."""
+        import base64
+        from vspm.db.database import utcnow
+
+        key = TemplateKey(key)
+        tpl = LabelTemplate.from_bytes(data)
+        tpl.check_spec(spec)
+        info = tpl.counter_info(spec.counter_object)
+        if info is not None and info["prefix"] != spec.barcode_prefix:
+            raise TemplateError(f"{filename}: counter prefix {info['prefix']} - expected {spec.barcode_prefix}")
+        problems = check_prepared_label(tpl.populate(spec, _sample_content(spec), 1), _sample_content(spec).barcode)
+        if problems:
+            raise TemplateError(f"{filename}: " + "; ".join(problems))
+        with self.db.transaction() as conn:
+            conn.execute("UPDATE label_templates SET active=0 WHERE template_key=?", (key.value,))
+            existing = conn.execute("SELECT id FROM label_templates WHERE template_key=? AND sha256=?",
+                                    (key.value, tpl.sha256)).fetchone()
+            if existing:
+                conn.execute("UPDATE label_templates SET active=1 WHERE id=?", (existing["id"],))
+            else:
+                conn.execute("INSERT INTO label_templates (template_key, sha256, filename, content_b64, counter_prefix, "
+                             "active, uploaded_by, uploaded_at) VALUES (?,?,?,?,?,1,?,?)",
+                             (key.value, tpl.sha256, filename, base64.b64encode(data).decode("ascii"),
+                              info["prefix"] if info else None, user, utcnow()))
+            self.db.audit("template", key.value, "template_uploaded", {"file": filename, "sha256": tpl.sha256},
+                          user, conn=conn)
+        return tpl.sha256
+
+
+def _sample_content(spec: "TemplateSpec") -> LabelContent:
+    return LabelContent(template_key=spec.key, material="ΤΕΣΤ", thickness="0,50", dimensions="1000", pieces="1", customer_short="TEST",
+                        weight="1", barcode=f"{spec.barcode_prefix}1")
+
+
 def counter_prefix_of(path: Path, counter_name: str = "COUNTER") -> str | None:
     """Counter PreText of a .label file (None if unreadable / no counter)."""
     try:
@@ -72,6 +134,7 @@ class TemplateRegistry:
     specs: dict[TemplateKey, TemplateSpec]
     template_dir: Path
     overrides: dict[str, str] = field(default_factory=dict)
+    store: Any = None  # TemplateStore: uploaded templates, used before files when present
     _cache: dict[TemplateKey, "LabelTemplate"] = field(default_factory=dict)
     _prefixes: dict[Path, str | None] | None = None
 
@@ -115,14 +178,48 @@ class TemplateRegistry:
                 f"{[c.name for c in candidates]}. Choose one with VSPM_TEMPLATE_FILES={key.value}=<file name>.")
         return candidates[0] if candidates else None
 
+    def source(self, key: TemplateKey) -> str:
+        """Where the template for `key` comes from (for display)."""
+        key = TemplateKey(key)
+        if self.store is not None:
+            row = self.store.active(key)
+            if row is not None:
+                return f"uploaded: {row['filename']} ({row['sha256'][:12]}…, {row['uploaded_at'][:16]})"
+        path = self.find_file(key)
+        return str(path) if path else "missing"
+
+    def load_version(self, key: TemplateKey, sha256: str | None) -> "LabelTemplate | None":
+        """The exact template version with this fingerprint (uploaded history or current file)."""
+        key = TemplateKey(key)
+        if not sha256:
+            return None
+        if self.store is not None:
+            data = self.store.by_sha(key, sha256)
+            if data is not None:
+                return LabelTemplate.from_bytes(data)
+        try:
+            tpl = self.load(key)
+        except TemplateError:
+            return None
+        return tpl if tpl.sha256 == sha256 else None
+
     def load(self, key: TemplateKey) -> "LabelTemplate":
         key = TemplateKey(key)
-        if key not in self._cache:
+        if self.store is not None:
+            row = self.store.active(key)
+            if row is not None:
+                cached = self._cache.get(key)
+                if cached is None or cached.sha256 != row["sha256"]:
+                    tpl = LabelTemplate.from_bytes(self.store.content(row))
+                    tpl.check_spec(self.spec(key))
+                    self._cache[key] = tpl
+                return self._cache[key]
+        if key not in self._cache or self._cache[key].path is None:
             path = self.find_file(key)
             if path is None:
                 raise TemplateError(
                     f"No template for {key.value} in {self.template_dir}: no .label file whose COUNTER prefix is "
-                    f"'{self.spec(key).barcode_prefix}' (or set VSPM_TEMPLATE_FILES)."
+                    f"'{self.spec(key).barcode_prefix}' (upload it in Settings - DYMO templates, or set VSPM_TEMPLATE_FILES)."
                 )
             tpl = LabelTemplate.load(path)
             tpl.check_spec(self.spec(key))

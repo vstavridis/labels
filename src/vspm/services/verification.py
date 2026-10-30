@@ -7,7 +7,6 @@ workbook. Nothing is modified.
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass, field
 from datetime import date
@@ -87,6 +86,11 @@ def compare_layout(original: etree._Element, printed: etree._Element, spec: Temp
     return diffs
 
 
+def _browser_jobs(ctx, label_id: int) -> list:
+    return ctx.db.query("SELECT * FROM print_jobs WHERE label_id=? AND status IN ('submitted','manual_confirmed') "
+                        "ORDER BY id", (label_id,))
+
+
 def verify_label(ctx, label_id: int) -> Report:
     """Run all checks for one label. `ctx` is an AppContext."""
     lab = ctx.repo.get_label(label_id)
@@ -98,22 +102,22 @@ def verify_label(ctx, label_id: int) -> Report:
     content = LabelContent.model_validate_json(lab["content_json"])
 
     # 1. Original template unchanged by the app
-    tpl_path = ctx.templates.find_file(key)
-    current_sha = hashlib.sha256(Path(tpl_path).read_bytes()).hexdigest()
+    current = ctx.templates.load(key)
+    original = ctx.templates.load_version(key, lab["template_sha256"]) if lab["template_sha256"] else None
     if lab["template_sha256"]:
-        rep.add("template file unchanged", current_sha == lab["template_sha256"],
-                "identical to the file used for printing" if current_sha == lab["template_sha256"] else
-                "the template file changed since printing (edited or counter advanced in DYMO)")
+        rep.add("template file unchanged", original is not None,
+                ("identical to the file used for printing" if current.sha256 == lab["template_sha256"] else
+                 "the exact template version used for printing is stored (a newer template is active now)")
+                if original is not None else
+                "the template used for printing is no longer available (file edited or counter advanced in DYMO)")
     else:
         rep.add("template file unchanged", None, "no fingerprint stored for this label (printed by an older version)")
-    original = LabelTemplate.from_bytes(Path(tpl_path).read_bytes(), tpl_path)
+    original = original or current
 
     # 2. Printed label = template + only the filled fields
     printed_path = Path(lab["label_xml_path"]) if lab["label_xml_path"] else None
-    if printed_path is None or not printed_path.exists():
-        rep.add("label layout preserved", None, "printed label file not found (label never sent to the printer)")
-        printed = None
-    else:
+    printed = None
+    if printed_path is not None and printed_path.exists():
         printed = LabelTemplate.from_bytes(printed_path.read_bytes(), printed_path)
         diffs = compare_layout(original.root, printed.root, spec)
         rep.add("label layout preserved", not diffs,
@@ -124,6 +128,26 @@ def verify_label(ctx, label_id: int) -> Report:
         rep.add("label content as approved", same,
                 f"{content.material} / {content.thickness} / {content.dimensions} / {content.pieces} τεμ / "
                 f"{content.customer_short} / {content.weight} kg" if same else "printed text differs from stored row")
+    elif getattr(ctx, "browser", None) is not None and _browser_jobs(ctx, label_id):
+        # Printed by the employee's browser: the server prepared the label, the browser reported the
+        # SHA-256 of what it sent to DYMO. Rebuild it from the template version and the stored row.
+        jobs = _browser_jobs(ctx, label_id)
+        expected = original.populate(spec, content, lab["number"], counter_mode=ctx.browser.counter_mode)
+        from vspm.dymo.template import check_prepared_label, xml_sha256
+        want = xml_sha256(expected)
+        bad = [j["job_key"][:8] for j in jobs if j["xml_sha256"] != want or
+               (j["browser_sha256"] and j["browser_sha256"] != want)]
+        problems = check_prepared_label(expected, lab["barcode"])
+        rep.add("label layout preserved", not problems and not bad,
+                f"{len(jobs)} browser print job(s): the label sent matches the template + approved row "
+                f"(SHA-256 {want[:12]}…)" if not problems and not bad else
+                "; ".join(problems + [f"job {b} sent a different label" for b in bad]))
+        rep.add("label content as approved", not bad,
+                f"{content.material} / {content.thickness} / {content.dimensions} / {content.pieces} τεμ / "
+                f"{content.customer_short} / {content.weight} kg")
+        printed = LabelTemplate.from_bytes(expected.encode("utf-8"))
+    else:
+        rep.add("label layout preserved", None, "printed label file not found (label never sent to the printer)")
 
     # 3. Barcode
     problems = []

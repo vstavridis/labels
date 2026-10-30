@@ -28,6 +28,7 @@ def env(settings, monkeypatch):
         "VSPM_EXCEL_WRITE_ENABLED": "true", "VSPM_EXCEL_PATH": str(settings.excel_path),
         "VSPM_TEMPLATE_DIR": str(settings.template_dir), "VSPM_TEMPLATES_CONFIG": str(settings.templates_config),
         "VSPM_CUSTOMERS_CONFIG": str(settings.customers_config), "VSPM_LANGUAGE": "el",
+        "VSPM_DATABASE_URL": settings.database_url,
     }.items():
         monkeypatch.setenv(k, v)
     from vspm.ui.common import get_context

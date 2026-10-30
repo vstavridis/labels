@@ -49,7 +49,7 @@ def run(port: int = 8501, host: str = typer.Option("localhost", help="0.0.0.0 = 
 def init():
     """Create the local database and data folders, and show configuration problems."""
     ctx = _ctx()
-    typer.echo(f"Database: {ctx.settings.db_path}")
+    typer.echo(f"Database: {'PostgreSQL (VSPM_DATABASE_URL)' if ctx.settings.database_url else ctx.settings.db_path}")
     for k, v in ctx.problems.items():
         typer.secho(f"  ! {k}: {v}", fg="yellow")
     if not ctx.problems:
