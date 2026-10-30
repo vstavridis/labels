@@ -92,7 +92,7 @@ def test_print_failure_is_reported_not_retried(browser, app_server, dymo_reset):
     page.get_by_role("button", name="Εκτύπωση TEST0001").click()
     status = bridge.locator('[data-testid="job-status"][data-state="failed"]')
     status.wait_for()
-    page.get_by_text("failed").first.wait_for()
+    page.locator(":text('failed'):visible").first.wait_for()  # recorded by the server
     assert jobs() == []
     ctx.close()
 

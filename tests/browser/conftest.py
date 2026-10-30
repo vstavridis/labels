@@ -68,12 +68,16 @@ def app_server(tmp_path_factory):
            "VSPM_EXCEL_WRITE_ENABLED": "true", "VSPM_EXCEL_PATH": str(d / "data" / "test_workbook" / "w.xlsx"),
            "VSPM_TEMPLATE_DIR": str(FIXTURES / "labels"), "VSPM_CUSTOMERS_CONFIG": str(FIXTURES / "customers.yaml"),
            "VSPM_REQUIRE_AUTH": "false", "VSPM_LANGUAGE": "el", "PYTHONUTF8": "1"}
+    log_path = d / "streamlit.log"
+    log = open(log_path, "wb")
     proc = subprocess.Popen(
         [sys.executable, "-m", "streamlit", "run", str(ROOT / "src" / "vspm" / "ui" / "app.py"),
          "--server.port", str(port), "--server.address", "127.0.0.1", "--server.headless", "true",
          "--browser.gatherUsageStats", "false", "--server.sslCertFile", str(cert), "--server.sslKeyFile", str(key),
          "--server.fileWatcherType", "none"],
-        env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, cwd=str(ROOT))
+        # A log file, not a pipe: nobody reads a pipe here, and once its buffer is full (small on
+        # Windows) the server blocks on its next log line and stops answering.
+        env=env, stdout=log, stderr=subprocess.STDOUT, cwd=str(ROOT))
     url = f"https://127.0.0.1:{port}"
     for _ in range(120):
         try:
@@ -82,7 +86,7 @@ def app_server(tmp_path_factory):
         except httpx.HTTPError:
             pass
         if proc.poll() is not None:
-            raise RuntimeError(proc.stdout.read().decode(errors="replace"))
+            raise RuntimeError(log_path.read_text(encoding="utf-8", errors="replace"))
         time.sleep(0.5)
     else:
         proc.terminate()
@@ -93,6 +97,7 @@ def app_server(tmp_path_factory):
         proc.wait(10)
     except subprocess.TimeoutExpired:
         proc.kill()
+    log.close()
 
 
 @pytest.fixture(scope="session")
