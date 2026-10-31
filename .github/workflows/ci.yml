@@ -150,5 +150,6 @@ jobs:
           }
           $page = Invoke-WebRequest -Uri "http://localhost:8501/" -UseBasicParsing
           Write-Host "health ok: $ok  page status: $($page.StatusCode)"
-          taskkill /PID $p.Id /T /F | Out-Null
+          taskkill /PID $p.Id /T /F 2>&1 | Out-Null  # some children may already have exited: not an error
           if (-not $ok) { throw "Streamlit did not start" }
+          exit 0
