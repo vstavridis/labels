@@ -8,7 +8,7 @@ import httpx
 import pytest
 from lxml import etree
 
-from tests.browser.conftest import new_page
+from tests.browser.conftest import goto_app, new_page
 from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page, wait_printer_selected, wait_station_verified
 
 
@@ -73,7 +73,7 @@ def excel_rows(app_ctx, barcode):
 def test_unverified_browser_cannot_print_production_labels(browser, app_server, dymo_reset, app_ctx):
     make_document_row(app_ctx)
     ctx, page = new_page(browser, app_server, allow_local_network=True)
-    page.goto(app_server["url"] + "/printer")
+    goto_app(page, app_server["url"] + "/printer")
     page.get_by_text("Αυτός ο υπολογιστής").first.wait_for()
     open_print_page(page, app_server)
     page.get_by_text("δεν έχει επιβεβαιωθεί").first.wait_for()
@@ -130,7 +130,7 @@ def test_two_tabs_print_the_row_only_once(browser, app_server, dymo_reset, app_c
     verify_this_browser(page_a, app_server)
     page_b = ctx.new_page()  # second tab of the same browser
     page_b.set_default_timeout(45000)
-    page_b.goto(app_server["url"] + "/printer")
+    goto_app(page_b, app_server["url"] + "/printer")
     page_b.get_by_text("Αυτός ο υπολογιστής").first.wait_for()
     httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
     open_print_page(page_a, app_server)
@@ -153,7 +153,7 @@ def test_two_tabs_print_the_row_only_once(browser, app_server, dymo_reset, app_c
 def test_download_fallback_contains_reserved_barcode(browser, app_server, dymo_reset, app_ctx):
     doc, rid = make_document_row(app_ctx, weight="321")
     ctx, page = new_page(browser, app_server, allow_local_network=False)  # browser printing blocked
-    page.goto(app_server["url"] + "/printer")
+    goto_app(page, app_server["url"] + "/printer")
     page.get_by_text("Αυτός ο υπολογιστής").first.wait_for()
     open_print_page(page, app_server)
     page.get_by_text(re.compile("Λήψη αρχείου .label")).click()

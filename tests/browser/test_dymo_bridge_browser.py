@@ -8,7 +8,7 @@ import httpx
 import pytest
 from lxml import etree
 
-from tests.browser.conftest import new_page
+from tests.browser.conftest import goto_app, new_page
 
 BRIDGE = 'iframe[data-testid="stCustomComponentV1"]'
 
@@ -35,7 +35,7 @@ def jobs():
 
 
 def open_printer_page(page, app_server):
-    page.goto(app_server["url"] + "/printer")
+    goto_app(page, app_server["url"] + "/printer")
     page.get_by_text("Αυτός ο υπολογιστής").first.wait_for()
     return page.frame_locator(BRIDGE).first
 
@@ -138,7 +138,7 @@ def test_browser_and_server_safety_checks_agree(browser, app_server, dymo_reset,
         xml = xml.replace("ΔΟΚΙΜΗ", "ΑΛΛΑΓΗ", 1)  # content changed after the server computed the hash
     ctx, page = new_page(browser, app_server, allow_local_network=True)
     bridge_frame = None
-    page.goto(app_server["url"] + "/printer")
+    goto_app(page, app_server["url"] + "/printer")
     page.locator(BRIDGE).first.wait_for()
     for f in page.frames:
         if f.url.endswith("index.html") or "component" in f.url:
@@ -160,7 +160,7 @@ def test_browser_and_server_safety_checks_agree(browser, app_server, dymo_reset,
 
 def test_sha256_fallback_matches_webcrypto(browser, app_server):
     ctx, page = new_page(browser, app_server, allow_local_network=False)
-    page.goto(app_server["url"] + "/printer")
+    goto_app(page, app_server["url"] + "/printer")
     page.locator(BRIDGE).first.wait_for()
     frame = next(f for f in page.frames if "component" in f.url or f.url.endswith("index.html"))
     text = "Ελληνικά ΓΑΛΒΑΝΙΖΕ " * 1000 + "x"

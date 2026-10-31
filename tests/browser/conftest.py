@@ -123,6 +123,17 @@ def dymo_reset(fake_dymo):
     yield fake_dymo
 
 
+def goto_app(page, url: str) -> None:
+    """Open an app page; if the Streamlit frontend has not drawn it after 30 s (seen on cold Windows CI
+    runners), reload once - what an employee would do."""
+    page.goto(url)
+    try:
+        page.locator("h1").first.wait_for(timeout=30000)
+    except Exception:
+        page.reload()
+        page.locator("h1").first.wait_for()
+
+
 _OPEN_CONTEXTS: list = []
 _SERVER_LOG: list = []
 
