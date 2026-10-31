@@ -59,7 +59,7 @@ Settings, secrets live only in the Streamlit secrets store.
 | `VSPM_DATABASE_URL` | PostgreSQL URL | Container disk is temporary |
 | `VSPM_PRINTER_MODE` | `browser` | Printers are on the PCs |
 | `VSPM_BARCODE_MODE` | `database` | Shared registry tables in the same database |
-| `VSPM_EXCEL_MODE` | `staging` | The server cannot write the OneDrive workbook |
+| `VSPM_EXCEL_MODE` | `onedrive` | Workbook updated through Microsoft Graph by one writer at a time — staged until the copy test passed and an admin enabled it ([CLOUD_SOURCES.md](CLOUD_SOURCES.md)) |
 | `VSPM_REQUIRE_AUTH` | (unset = required) | Login is required whenever a database URL is set |
 | `VSPM_DYMO_COUNTER_MODE` | `sync` (or `remove`) | How the template COUNTER is neutralised |
 

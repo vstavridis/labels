@@ -62,10 +62,42 @@ Using Microsoft 365 accounts instead? See the Microsoft block in `.streamlit/sec
 
 ## Step 3 — Google Drive and AI (for reading the scans)
 
-* Google Drive: follow [docs/GOOGLE_DRIVE.md](docs/GOOGLE_DRIVE.md) to create a **service account**, download
-  its JSON key and **share the scans folder** with the service account's e-mail. Copy the folder ID from the
-  folder's address (`https://drive.google.com/drive/folders/<FOLDER_ID>`).
-* AI reading: your Anthropic API key from <https://console.anthropic.com> → *API keys*.
+**Google Drive (service account, read-only)**
+
+1. <https://console.cloud.google.com> → the same project as step 2 (or a new one) → **APIs & Services →
+   Library** → search **Google Drive API** → **Enable**.
+2. **APIs & Services → Credentials → Create credentials → Service account** → name `vspm-scans` → **Done**.
+3. Click the new service account → **Keys → Add key → Create new key → JSON** → a file downloads. Its whole
+   content goes into the secrets (step 4). Keep the file private and delete it from Downloads afterwards.
+4. Copy the service account's e-mail (`vspm-scans@<project>.iam.gserviceaccount.com`).
+5. In Google Drive open the **scans folder** → **Share** → paste that e-mail → role **Viewer** → **Send**.
+   (The app can only see what is shared with it, and can never change or delete scans.)
+6. Keep the folder link (`https://drive.google.com/drive/folders/…?usp=sharing`) for step 4.
+
+**AI reading:** your Anthropic API key from <https://console.anthropic.com> → *API keys*.
+
+## Step 3b — Microsoft OneDrive access (templates and workbook)
+
+The app reads the DYMO templates and the workbook from **your** OneDrive. A sharing link alone gives an
+app no access; you sign in once with your Microsoft account and the app keeps that sign-in (encrypted).
+
+1. Go to <https://entra.microsoft.com> and sign in with the Microsoft account that owns the OneDrive.
+   If it says you have no directory/tenant, create a free Azure account first (<https://azure.microsoft.com/free>,
+   app registrations cost nothing) and come back.
+2. **Applications → App registrations → New registration**:
+   * Name: `VS Production Manager`
+   * Supported account types: **Personal Microsoft accounts only**
+   * Redirect URI: leave empty → **Register**.
+3. Copy **Application (client) ID** → this is `VSPM_MS_CLIENT_ID`.
+4. **Authentication** → *Advanced settings* → **Allow public client flows: Yes** → **Save**.
+   (The app signs in with a one-time code; no client secret is needed.)
+5. **API permissions → Add a permission → Microsoft Graph → Delegated permissions** → tick
+   **Files.ReadWrite**, **offline_access**, **User.Read** → **Add permissions**.
+   (Personal OneDrive has no narrower folder permission. Files.ReadWrite is needed only because the app
+   may later add rows to the workbook; templates are only read.)
+6. In OneDrive make a **copy of `Σχισμενα.xlsx`** (e.g. `Σχισμενα - ΔΟΚΙΜΗ.xlsx`) and get its link
+   (*Share → Copy link*). The app tests automatic Excel writing on this copy before it may touch the
+   real workbook.
 
 ## Step 4 — Prepare the Secrets text
 
@@ -77,7 +109,13 @@ text editor (Notepad) and replace the placeholders:
 | `VSPM_DATABASE_URL` | the Neon connection string (step 1) |
 | `VSPM_ALLOWED_EMAILS` | employees' e-mails, comma-separated |
 | `VSPM_ADMIN_EMAILS` | your e-mail (may upload templates and set barcode numbers) |
-| `VSPM_DRIVE_FOLDER_ID` | the scans folder ID (step 3) |
+| `VSPM_GDRIVE_FOLDER_URL` | the scans folder link (step 3) |
+| `VSPM_MS_CLIENT_ID` | the Application (client) ID (step 3b) |
+| `VSPM_SECRET_KEY` | another long random text (40+ characters). It encrypts the stored Microsoft sign-in; do not change it later |
+| `VSPM_ONEDRIVE_TEMPLATES_URL` | link of the OneDrive folder with the four `.label` files |
+| `VSPM_ONEDRIVE_TEMPLATE_FILES` | the four exact file names: `VS=…label;PG=…label;PG0=…label;EX=…label` |
+| `VSPM_ONEDRIVE_WORKBOOK_URL` | link of `Σχισμενα.xlsx` |
+| `VSPM_ONEDRIVE_WORKBOOK_TEST_URL` | link of the COPY (step 3b.6) |
 | `VSPM_GOOGLE_CREDENTIALS_JSON` | the whole content of the service-account JSON file, between the `'''` |
 | `ANTHROPIC_API_KEY` | your Anthropic key |
 | `[auth]` `redirect_uri` | `https://YOUR-APP-NAME.streamlit.app/oauth2callback` |
@@ -89,9 +127,12 @@ Leave these as they are — they are the safe cloud settings:
 ```toml
 VSPM_BARCODE_MODE = "database"        # barcodes come from the shared database
 VSPM_PRINTER_MODE = "browser"         # each browser prints to its own PC's DYMO
-VSPM_EXCEL_MODE = "staging"           # the app never writes your OneDrive workbook
+VSPM_EXCEL_MODE = "onedrive"          # rows stay staged until the copy test passed AND you enable writing
 VSPM_EXCEL_WRITE_ENABLED = "false"
 ```
+
+The links are kept in the Secrets (not in the code) because the repository is public: anyone could
+otherwise see your sharing links. They pre-fill Settings → Cloud sources, where you can change them.
 
 Delete the Microsoft lines if you use Google. Keep the text only in Streamlit (next step), not in a file.
 
@@ -119,11 +160,26 @@ You should now see the sign-in page. Sign in with your admin e-mail.
 
 ## Step 6 — First start (admin, about 10 minutes)
 
-1. **⚙️ Settings → DYMO templates**: upload the four `.label` files from DYMO Label (VS, PG, PG0, EX), one
-   at a time. Each file is checked; a wrong file is refused with the reason.
-2. **⚙️ Settings → Customer rules**: enter the customer abbreviations (or check them if already there).
-3. **⚙️ Settings → Integration checks**: Documents (Google Drive) should list your scans.
-4. **Do not set the barcode series yet.** Until you do, the app refuses to print production labels.
+1. **⚙️ Settings → ☁️ Cloud sources** → the links are pre-filled from the Secrets.
+2. **Connect Microsoft account** → a code appears → open <https://microsoft.com/devicelogin>, enter the code,
+   sign in with your Microsoft account, accept the permissions → back in the app press **I have signed in**.
+3. **Test OneDrive connection** → the folder and its `.label` files are listed.
+   **Refresh DYMO templates** → VS, PG, PG0, EX each show *updated* (checked, stored as versions; the
+   originals in OneDrive are only read). From now on the app checks OneDrive for changed templates
+   automatically (every 10 minutes at most). No manual upload is needed.
+4. **Test Excel workbook access** → name, size, last row and formulas L–O are shown (read-only).
+5. **End-to-end test on the COPY** → every check must show ✅ (row added to the *copy* with formulas, read
+   back, nothing else in the file changed, an outdated upload refused). Open the copy in Excel Online and
+   look at the new test row.
+6. Leave **automatic writing to the PRODUCTION workbook** OFF for now: printed labels wait in
+   *History → Excel* (staged). Switch it on only after step 9 went well and you have checked the copy.
+7. **Test Google Drive connection** → the 5 latest scans are listed. If it fails, check that the folder is
+   shared with the service account e-mail shown there.
+8. **⚙️ Settings → Customer rules**: enter or check the customer abbreviations.
+9. **Do not set the barcode series yet.** Until you do, the app refuses to print production labels.
+
+(The manual upload under *Settings → DYMO templates* still exists as a fallback, e.g. if OneDrive is
+unreachable.)
 
 ## Step 7 — Set up each of the two PCs (about 10 minutes each)
 
@@ -159,8 +215,15 @@ Full sheet: [docs/WINDOWS_PC_SETUP.md](docs/WINDOWS_PC_SETUP.md). In short, on *
 | 6 | *History → Excel*: download the pending rows, enter them in `Σχισμενα.xlsx`, upload a copy → *Check the copy* | the labels become *synchronised* |
 | 7 | Sign in with an e-mail that is not on the list | refused |
 
-Excel stays in **staging** mode: the app never writes to the OneDrive workbook. Change this only after
-direct OneDrive writing has been tested separately.
+Excel stays **staged** until you switch on automatic writing (step 6.6). Then:
+
+| # | Do | Expected |
+|---|---|---|
+| 8 | Switch on automatic writing, print one label | *History*: Excel *synchronised*; the row appears in `Σχισμενα.xlsx` (OneDrive web) once, with formulas L–O |
+| 9 | Open the workbook in Excel on PC 1 and save a change, then print on PC 2 | the change is kept and the new row is added (the app re-read the file) |
+| 10 | Print on both PCs at the same moment | each row once; one PC may show *busy* and sync on the next print / *Sync now* |
+
+How it works, limits and recovery: [docs/CLOUD_SOURCES.md](docs/CLOUD_SOURCES.md).
 
 ## Updating the app
 
@@ -175,6 +238,10 @@ Your data stays in Neon.
 | *Employee login is not configured – the app stays closed* | The `[auth]` block or `VSPM_ALLOWED_EMAILS` is missing in Secrets |
 | Google says *redirect_uri_mismatch* | The redirect URI in Google and in Secrets must both be `https://YOUR-APP-NAME.streamlit.app/oauth2callback` |
 | *Access blocked / app not verified* at Google sign-in | Add the account under *OAuth consent screen → Audience → Test users* |
+| *No Microsoft account is connected* / *sign-in expired* | Settings → Cloud sources → **Connect Microsoft account** again (also needed after ~90 days without use) |
+| *OneDrive item not found* for a link | Copy the link again in OneDrive (*Share → Copy link*). Still failing: enter the path inside your OneDrive instead, e.g. `Documents/Ετικέτες` |
+| A template shows *error* | The message says why (wrong counter prefix, file renamed). The previous version keeps being used |
+| Google Drive: *listing failed* / 404 | Share the folder with the service account e-mail (Viewer); Drive API enabled (step 3) |
 | Database errors at start | Check `VSPM_DATABASE_URL` (copy again from Neon, keep `?sslmode=require`) |
 | *DYMO service: not found* on a PC | Step 7.2; then **Re-check** on the printer page |
 | *The browser blocks access to the DYMO service* | Address bar icon → Site settings → *Local network access* → **Allow** → reload |

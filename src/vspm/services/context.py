@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from vspm.barcodes.allocator import (
     DatabaseRegistryAllocator,
@@ -49,6 +49,7 @@ class AppContext:
     problems: dict[str, str] = field(default_factory=dict)
     recovery_notes: list[str] = field(default_factory=list)
     browser: Optional[BrowserPrintService] = None
+    cloud: Any = None  # CloudServices (OneDrive templates/workbook, Google Drive folder)
 
     def ocr_provider(self):
         s = self.settings
@@ -146,10 +147,16 @@ def build_context(s: Settings) -> AppContext:
                                 write_enabled=s.excel_write_enabled,
                                 allowed_root=s.data_path if s.excel_require_test_copy else None)
 
+    from vspm.services.cloud_sources import CloudServices
+    cloud = CloudServices(db, s, templates, repo, payload_for=lambda lab: production._payload(lab))
     source: Optional[DocumentSource] = None
     try:
         if s.drive_mode == DriveMode.google:
-            source = GoogleDriveSource(s.drive_folder_id, s.google_auth, s.resolve(s.google_credentials_file),
+            try:
+                folder_id = cloud.gdrive_folder_id() or s.drive_folder_id  # Settings -> Cloud sources first
+            except ValueError as e:
+                raise RuntimeError(f"Google Drive folder link: {e}") from e
+            source = GoogleDriveSource(folder_id, s.google_auth, s.resolve(s.google_credentials_file),
                                        s.resolve(s.google_token_file), s.google_credentials_json)
         elif s.drive_mode == DriveMode.local:
             source = LocalFolderSource(s.resolve(s.local_scan_dir))
@@ -164,6 +171,8 @@ def build_context(s: Settings) -> AppContext:
                                    registry_client=registry_client)
     ctx = AppContext(s, db, repo, customers, templates, transforms, allocator, printer, writer, production, documents,
                      registry_client, problems)
+    ctx.cloud = cloud
+    production.cloud_excel = cloud.workbook
     ctx.browser = BrowserPrintService(db, templates, counter_mode=s.dymo_counter_mode)
     production.browser = ctx.browser
     ctx.browser.on_label_result = production.apply_browser_result

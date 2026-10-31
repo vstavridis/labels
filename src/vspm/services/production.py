@@ -137,7 +137,8 @@ class ProductionService:
         self.tz = ZoneInfo(settings.timezone)
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.labels_dir = settings.data_path / "labels"
-        self.browser = None  # BrowserPrintService, set by build_context
+        self.browser = None
+        self.cloud_excel = None  # WorkbookSync (VSPM_EXCEL_MODE=onedrive), set by build_context
 
     # ---- helpers ------------------------------------------------------------------
     def _m(self, key: str, **kw) -> str:
@@ -555,6 +556,17 @@ class ProductionService:
             self.repo.update_label(label_id, excel_status=ExcelStatus.staged.value)
             self.repo.add_excel_attempt(label_id, mode=mode.value, status="staged")
             return [self._m("excel_staged")]
+        if mode == ExcelMode.onedrive:
+            # The row is already stored in the database; the single OneDrive writer adds it to the workbook
+            # (or keeps it staged until automatic writing has been tested on a copy and enabled).
+            if self.cloud_excel is None:
+                return self._excel_failed(label_id, mode.value, "OneDrive workbook sync is not configured", "error")
+            res = self.cloud_excel.sync_pending(op, label_ids=[label_id])
+            if res.status == "synchronized":
+                return [self._m("excel_written", n=res.rows.get(payload.barcode, "?"))]
+            if res.status == "staged":
+                return [self._m("excel_staged")]
+            return [f"Excel (OneDrive): {res.message}"]
         if mode == ExcelMode.registry_queue:
             if self.registry_client is None:
                 return self._excel_failed(label_id, mode.value, "registry_queue mode needs VSPM_REGISTRY_URL/API key",

@@ -115,3 +115,33 @@ def test_non_admin_cannot_change_templates_or_series(env, monkeypatch, tmp_path)
     assert not at.number_input  # no series form
     assert not any(b.proto.form_id in ("upload_template", "init_series", "observe", "block") for b in at.button)
     assert sum("VSPM_ADMIN_EMAILS" in i.value for i in at.info) >= 2
+
+
+def test_cloud_sources_tab_connects_and_refreshes_templates(env, monkeypatch, tmp_path):
+    """Settings -> Cloud sources against the Microsoft test double: device-code sign-in, template refresh."""
+    from tests.test_cloud_sources import FOLDER_LINK, NAMES, fixture_label
+    from vspm.services import cloud_sources
+    from vspm.testing_graph import FakeMicrosoft
+    fake = FakeMicrosoft()
+    folder = fake.add_folder("Ετικέτες", link=FOLDER_LINK)
+    for key, name in NAMES.items():
+        fake.add_file(name, fixture_label(key), parent=folder.id)
+    monkeypatch.setattr(cloud_sources, "HTTP_CLIENT_FACTORY", fake.client)
+    for k, v in {"VSPM_MS_CLIENT_ID": "test-client", "VSPM_SECRET_KEY": "a-long-test-secret-key-123",
+                 "VSPM_ONEDRIVE_TEMPLATES_URL": FOLDER_LINK,
+                 "VSPM_ONEDRIVE_TEMPLATE_FILES": ";".join(f"{k}={v}" for k, v in NAMES.items())}.items():
+        monkeypatch.setenv(k, v)
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = run_page("settings_page")
+    assert any(t.value == FOLDER_LINK for t in at.text_input)  # prefilled from the secrets
+    next(b for b in at.button if b.label in ("Σύνδεση λογαριασμού Microsoft", "Connect Microsoft account")).click().run()
+    assert any("ABCD-1234" in i.value for i in at.info), [i.value for i in at.info]
+    fake.approved = True
+    next(b for b in at.button if b.label in ("Συνδέθηκα", "I have signed in")).click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    next(b for b in at.button if b.label in ("Ανανέωση προτύπων DYMO", "Refresh DYMO templates")).click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    ok = [s.value for s in at.success]
+    assert sum(" — updated" in v for v in ok) == 4, ok
+    assert get_context().templates.load("PG0").sha256

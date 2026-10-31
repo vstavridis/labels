@@ -233,44 +233,10 @@ class SafeWorkbookWriter:
 
         original = self.read_bytes()
         hash_before = sha256(original)
-        try:
-            pkg = XlsxPackage(original)
-            editor = SheetEditor(pkg, self.sheet)
-        except XlsxError as e:
-            raise WorkbookUnavailableError(str(e)) from e
-
-        results: list[AppendResult] = []
-        to_write: list[tuple[int, ExcelRowPayload]] = []
-        existing_h = editor.column_values("H")
-        existing_index = {str(v).strip().upper(): r for r, v in existing_h.items()}
-        next_row = editor.last_data_row() + 1
-        template_row = next_row - 1
-        for p in payloads:
-            key = p.barcode.strip().upper()
-            if key in existing_index:
-                results.append(AppendResult(p.barcode, "already_present", existing_index[key]))
-                continue
-            # Target row must be empty in A..P (it may carry formatting only).
-            for col in "ABCDEFGHIJKLMNOP":
-                cv = editor.value(next_row, col)
-                if editor._has_value(cv) and cv.kind != "formula":
-                    raise WorkbookConflictError(f"Target row {next_row} is not empty (column {col}).")
-            to_write.append((next_row, p))
-            existing_index[key] = next_row
-            results.append(AppendResult(p.barcode, "written", next_row))
-            next_row += 1
-
+        new_bytes, results, to_write = append_rows(original, self.sheet, payloads, date_format=self.date_format,
+                                                   full_calc_on_load=self.full_calc_on_load)
         if not to_write:
             return WriteReport(results, hash_before, hash_before, None)
-
-        for rnum, p in to_write:
-            values, dates = payload_to_cells(p)
-            formulas = {c: editor.formula_for_row(c, rnum) for c in FORMULA_COLS}
-            editor.write_row(rnum, values, formulas, dates, self.date_format, template_row)
-        if self.full_calc_on_load:
-            set_full_calc_on_load(pkg)
-        new_bytes = save_package(pkg)
-        self._verify(new_bytes, to_write)
 
         # Optimistic concurrency check right before replacing.
         if sha256(self.read_bytes()) != hash_before:
@@ -284,7 +250,7 @@ class SafeWorkbookWriter:
         if hash_after != sha256(new_bytes):
             raise WorkbookChangedError("Read-back hash differs from what was written (file changed immediately "
                                        "after writing - check OneDrive).")
-        self._verify(written, to_write)
+        verify_rows(written, self.sheet, to_write)
         return WriteReport(results, hash_before, hash_after, backup)
 
     def _atomic_replace(self, new_bytes: bytes, hash_before: str) -> None:
@@ -318,26 +284,6 @@ class SafeWorkbookWriter:
                 except OSError:
                     pass
 
-    def _verify(self, data: bytes, written: list[tuple[int, ExcelRowPayload]]) -> None:
-        editor = SheetEditor(XlsxPackage(data), self.sheet)
-        for rnum, p in written:
-            values, dates = payload_to_cells(p)
-            for col, expected in values.items():
-                got = editor.value(rnum, col)
-                exp_empty = expected is None or expected == ""
-                if exp_empty:
-                    if editor._has_value(got):
-                        raise ExcelSyncError(f"Verification failed at {col}{rnum}: expected empty")
-                    continue
-                if got.value != expected and str(got.value) != str(expected):
-                    raise ExcelSyncError(f"Verification failed at {col}{rnum}: {got.value!r} != {expected!r}")
-            for col in FORMULA_COLS:
-                got = editor.value(rnum, col)
-                if got.kind != "formula" or not got.formula:
-                    raise ExcelSyncError(f"Verification failed: no formula in {col}{rnum}")
-            if editor.find_rows_with_value("H", p.barcode) != [rnum]:
-                raise ExcelSyncError(f"Verification failed: barcode {p.barcode} not unique at row {rnum}")
-
     def _backup(self, data: bytes) -> Path:
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         ts = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
@@ -347,6 +293,74 @@ class SafeWorkbookWriter:
         for old in backups[: max(0, len(backups) - self.keep_backups)]:
             old.unlink(missing_ok=True)
         return dest
+
+
+def append_rows(original: bytes, sheet: str, payloads: list[ExcelRowPayload], *, date_format: str = "dd/mm/yyyy",
+                full_calc_on_load: bool = True) -> tuple[Optional[bytes], list[AppendResult],
+                                                         list[tuple[int, ExcelRowPayload]]]:
+    """Append production rows to workbook bytes (pure function, no I/O).
+
+    Used for the local file and for the OneDrive copy. Barcodes already in column H are
+    reported as `already_present` and never written twice. Columns A-K and P get values,
+    L-O get the formulas of the previous row (adjusted), every other part of the package
+    is kept byte for byte. Returns (new bytes or None if nothing to write, results, rows written)."""
+    try:
+        pkg = XlsxPackage(original)
+        editor = SheetEditor(pkg, sheet)
+    except XlsxError as e:
+        raise WorkbookUnavailableError(str(e)) from e
+    results: list[AppendResult] = []
+    to_write: list[tuple[int, ExcelRowPayload]] = []
+    existing_index = {str(v).strip().upper(): r for r, v in editor.column_values("H").items()}
+    next_row = editor.last_data_row() + 1
+    template_row = next_row - 1
+    for p in payloads:
+        key = p.barcode.strip().upper()
+        if key in existing_index:
+            results.append(AppendResult(p.barcode, "already_present", existing_index[key]))
+            continue
+        # Target row must be empty in A..P (it may carry formatting only).
+        for col in "ABCDEFGHIJKLMNOP":
+            cv = editor.value(next_row, col)
+            if editor._has_value(cv) and cv.kind != "formula":
+                raise WorkbookConflictError(f"Target row {next_row} is not empty (column {col}).")
+        to_write.append((next_row, p))
+        existing_index[key] = next_row
+        results.append(AppendResult(p.barcode, "written", next_row))
+        next_row += 1
+    if not to_write:
+        return None, results, []
+    for rnum, p in to_write:
+        values, dates = payload_to_cells(p)
+        formulas = {c: editor.formula_for_row(c, rnum) for c in FORMULA_COLS}
+        editor.write_row(rnum, values, formulas, dates, date_format, template_row)
+    if full_calc_on_load:
+        set_full_calc_on_load(pkg)
+    new_bytes = save_package(pkg)
+    verify_rows(new_bytes, sheet, to_write)
+    return new_bytes, results, to_write
+
+
+def verify_rows(data: bytes, sheet: str, written: list[tuple[int, ExcelRowPayload]]) -> None:
+    """Re-read the workbook and check every written row (values, formulas L-O, unique barcode)."""
+    editor = SheetEditor(XlsxPackage(data), sheet)
+    for rnum, p in written:
+        values, dates = payload_to_cells(p)
+        for col, expected in values.items():
+            got = editor.value(rnum, col)
+            exp_empty = expected is None or expected == ""
+            if exp_empty:
+                if editor._has_value(got):
+                    raise ExcelSyncError(f"Verification failed at {col}{rnum}: expected empty")
+                continue
+            if got.value != expected and str(got.value) != str(expected):
+                raise ExcelSyncError(f"Verification failed at {col}{rnum}: {got.value!r} != {expected!r}")
+        for col in FORMULA_COLS:
+            got = editor.value(rnum, col)
+            if got.kind != "formula" or not got.formula:
+                raise ExcelSyncError(f"Verification failed: no formula in {col}{rnum}")
+        if editor.find_rows_with_value("H", p.barcode) != [rnum]:
+            raise ExcelSyncError(f"Verification failed: barcode {p.barcode} not unique at row {rnum}")
 
 
 def glob_escape(s: str) -> str:

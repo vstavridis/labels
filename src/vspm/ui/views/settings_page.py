@@ -11,7 +11,7 @@ from vspm.envfile import read_env, update_env
 from vspm.services.customers import CustomerRule
 from vspm.ui.auth import is_admin
 from vspm.ui.common import T, flash, get_context, reload_context, show_flash
-from vspm.ui.views import settings_admin
+from vspm.ui.views import cloud_settings, settings_admin
 
 ENV_FIELDS = [
     ("VSPM_DRIVE_MODE", ["google", "local", "mock"]),
@@ -48,12 +48,14 @@ def render() -> None:
     show_flash()
     st.title(T("nav_settings"))
     tabs = st.tabs([T("env_settings"), T("customer_rules"), T("integration_checks"), T("logs"),
-                    T("dymo_templates"), T("barcode_series")])
+                    T("dymo_templates"), T("barcode_series"), "☁️ " + T("cloud_sources")])
     env_path = PROJECT_ROOT / ".env"
     with tabs[4]:
         settings_admin.templates_tab(ctx)
     with tabs[5]:
         settings_admin.series_tab(ctx)
+    with tabs[6]:
+        cloud_settings.render(ctx)
 
     with tabs[0]:
         if ctx.settings.database_url:

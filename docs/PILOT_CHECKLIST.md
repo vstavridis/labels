@@ -161,3 +161,24 @@ How browser printing works and what was investigated: [BROWSER_PRINTING.md](BROW
 - [ ] P9 🖨️ Reprint one label → same barcode, nothing new in Excel staging.
 - [ ] P10 🏭 Enter the rows in the workbook, upload a copy, *Check the copy* → synchronised.
 - [ ] P11 🏭 Anyone printing manually in DYMO Label uses a reserved block (Settings → Barcode series).
+
+### Cloud sources (OneDrive / Google Drive) — tested only against a test double
+
+Verified in code: link → item resolution with the owner's token, device-code sign-in with encrypted token
+storage and refresh, template listing by exact name / COUNTER prefix, version change detection, broken
+template refused, workbook read-only inspection, copy test (If-Match, read-back, untouched parts, stale
+eTag refused), production gate, retry after a concurrent save, conflict and error kept pending, two
+instances writing each row once, Google folder link parsing (`tests/test_cloud_sources.py`, UI test in
+`tests/test_ui.py`). Needs your accounts 🔑:
+
+- [ ] C1 🔑 Microsoft sign-in with the device code; Settings shows your account.
+- [ ] C2 🔑 *Test OneDrive connection* resolves your `1drv.ms/f/c/…` link (else use the folder path).
+- [ ] C3 🔑🖨️ *Refresh DYMO templates*: VS, PG, PG0, EX *updated*; TEST0001 on each looks identical to DYMO Label.
+- [ ] C4 🔑 Change a template in DYMO Label and save to OneDrive → after a refresh a new version is used; an
+      older label reprints with its original layout.
+- [ ] C5 🔑 *Test Excel workbook access* resolves `Σχισμενα.xlsx`; *End-to-end test on the COPY* all ✅; open the
+      copy in Excel Online and check the test row, formulas L–O, other sheets and links.
+- [ ] C6 🔑🏭 Only then: enable production writing; print one label; check the row in Excel Online; save a change
+      from Excel on one PC and print on the other (the change must be kept).
+- [ ] C7 🔑 Google Drive: folder shared with the service account; *Test Google Drive connection* lists 5 scans.
+

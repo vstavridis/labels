@@ -22,6 +22,14 @@ st.markdown(CSS, unsafe_allow_html=True)
 ctx = get_context()
 lang()
 access = auth.gate(ctx.settings)  # stops here unless the employee is signed in (cloud)
+if ctx.cloud is not None and not st.session_state.get("_templates_checked"):
+    # The DYMO templates come from OneDrive: check for a new version at most every few minutes
+    # (shared by both PCs). Errors are recorded and shown in Settings -> Cloud sources.
+    st.session_state["_templates_checked"] = True
+    try:
+        ctx.cloud.templates.maybe_refresh(ctx.settings.cloud_refresh_minutes * 60)
+    except Exception:  # noqa: BLE001 - never block the app on a cloud problem
+        pass
 
 with st.sidebar:
     st.markdown(f"### 🏷️ {T('app_title')}")

@@ -51,6 +51,7 @@ class ExcelMode(str, Enum):
     staging = "staging"
     direct = "direct"
     registry_queue = "registry_queue"
+    onedrive = "onedrive"  # personal OneDrive via Microsoft Graph; staged until tested on a copy and enabled
 
 
 class Settings(BaseSettings):
@@ -105,6 +106,17 @@ class Settings(BaseSettings):
     # PostgreSQL for ALL application state (required on Streamlit Community Cloud, whose disk is
     # temporary). Empty = local SQLite file in the data folder.
     database_url: str = ""
+    # Cloud sources (defaults for Settings -> Cloud sources; the admin can change them there).
+    onedrive_templates_url: str = ""  # OneDrive folder with the four .label files
+    onedrive_template_files: str = ""  # exact names: "VS=…label;PG=…label;PG0=…label;EX=…label" (empty = by COUNTER)
+    onedrive_workbook_url: str = ""  # production workbook (Σχισμενα.xlsx)
+    onedrive_workbook_test_url: str = ""  # a separate COPY used for the end-to-end test
+    gdrive_folder_url: str = ""  # Google Drive folder with the scans (overrides VSPM_DRIVE_FOLDER_ID)
+    ms_client_id: str = ""  # Entra app registration (public client, personal accounts)
+    ms_tenant: str = "consumers"
+    secret_key: str = ""  # encrypts stored OAuth tokens (Streamlit secrets only)
+    cloud_refresh_minutes: int = 10  # templates are re-checked in OneDrive at most this often
+
     # Employee login (Streamlit OIDC). None = required whenever VSPM_DATABASE_URL is set (cloud).
     require_auth: Optional[bool] = None
     allowed_emails: str = ""  # comma-separated employee e-mails
@@ -212,6 +224,7 @@ class Settings(BaseSettings):
         d["anthropic_api_key"] = "set" if self.anthropic_api_key else "not set"
         d["registry_api_key"] = "set" if self.registry_api_key else "not set"
         d["google_credentials_json"] = "set" if self.google_credentials_json else "not set"
+        d["secret_key"] = "set" if self.secret_key else "not set"
         d["database_url"] = "PostgreSQL (set)" if self.database_url else "local SQLite"
         d["registry_database_url"] = "set" if self.registry_database_url else "same as database_url"
         d["allowed_emails"] = f"{len([e for e in self.allowed_emails.split(',') if e.strip()])} e-mail(s)"

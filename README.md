@@ -83,6 +83,7 @@ disabled, Excel in staging mode pointing at a test copy. Switch each integration
 | Google Drive | [docs/GOOGLE_DRIVE.md](docs/GOOGLE_DRIVE.md) |
 | AI provider & data handling | [docs/AI_PROVIDER.md](docs/AI_PROVIDER.md) |
 | **Deploy on Streamlit Community Cloud — step by step** | [DEPLOY_STREAMLIT.md](DEPLOY_STREAMLIT.md) |
+| OneDrive templates & workbook, Google Drive folder (how, limits, recovery) | [docs/CLOUD_SOURCES.md](docs/CLOUD_SOURCES.md) |
 | Hosted app: reference (settings, operations) | [docs/STREAMLIT_CLOUD.md](docs/STREAMLIT_CLOUD.md) |
 | **What to install on each Windows PC** (hosted app) | [docs/WINDOWS_PC_SETUP.md](docs/WINDOWS_PC_SETUP.md) |
 | Browser-side DYMO printing (how, safety, HTTPS/CORS/LNA findings) | [docs/BROWSER_PRINTING.md](docs/BROWSER_PRINTING.md) |
