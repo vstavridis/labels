@@ -128,6 +128,12 @@ class Settings(BaseSettings):
     customers_config: Path = Path("config/customers.yaml")
     materials_config: Path = Path("config/materials.yaml")
 
+    @field_validator("require_auth", mode="before")
+    @classmethod
+    def _blank_is_default(cls, v):
+        """An empty secret/env value means "not set" (login required on the cloud), not an error."""
+        return None if isinstance(v, str) and not v.strip() else v
+
     @field_validator("language")
     @classmethod
     def _lang(cls, v: str) -> str:

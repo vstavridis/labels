@@ -1,8 +1,8 @@
 # Deploying on Streamlit Community Cloud
 
 Target setup: one hosted app, used from the two Windows PCs (and any other authorised browser),
-with all state in one persistent PostgreSQL database. Branch: `claude/browser-dymo-printing`
-until it is merged.
+with all state in one persistent PostgreSQL database. Branch: **`main`**.
+Step-by-step beginner guide: [DEPLOY_STREAMLIT.md](../DEPLOY_STREAMLIT.md).
 
 ```
  Browser (PC 1, PC 2) ──HTTPS──▶ Streamlit Community Cloud ──TLS──▶ PostgreSQL (Neon / Supabase / …)
@@ -40,7 +40,7 @@ templates and set barcode series) can use the app; everyone else is refused afte
 ## 3. Create the app
 
 1. <https://share.streamlit.io> → **Create app** → from GitHub: repository `vstavridis/labels`,
-   the branch, **Main file path `src/vspm/ui/app.py`**.
+   branch **`main`**, **Main file path `src/vspm/ui/app.py`**.
 2. *Advanced settings*: **Python 3.12**. Secrets: paste `.streamlit/secrets.toml.example` with
    real values (database URL, e-mail lists, `[auth]` block, Google Drive service-account JSON,
    `ANTHROPIC_API_KEY`). Never commit the real values.

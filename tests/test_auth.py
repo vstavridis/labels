@@ -81,3 +81,9 @@ def test_app_opens_when_login_explicitly_off(app_env, monkeypatch):
     assert not at.exception, [e.value for e in at.exception]
     assert not any("not configured" in e.value for e in at.error)
     assert at.sidebar.text_input  # operator field of the local (no-login) mode
+
+
+def test_blank_require_auth_means_default(settings, monkeypatch):
+    from vspm.config import Settings
+    monkeypatch.setenv("VSPM_REQUIRE_AUTH", "")
+    assert Settings(_env_file=None).require_auth is None  # -> required whenever a database URL is set

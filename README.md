@@ -82,7 +82,8 @@ disabled, Excel in staging mode pointing at a test copy. Switch each integration
 | Installation & launch (all OS, shared server, Docker) | [docs/INSTALL.md](docs/INSTALL.md) |
 | Google Drive | [docs/GOOGLE_DRIVE.md](docs/GOOGLE_DRIVE.md) |
 | AI provider & data handling | [docs/AI_PROVIDER.md](docs/AI_PROVIDER.md) |
-| **Hosted app on Streamlit Community Cloud** | [docs/STREAMLIT_CLOUD.md](docs/STREAMLIT_CLOUD.md) |
+| **Deploy on Streamlit Community Cloud — step by step** | [DEPLOY_STREAMLIT.md](DEPLOY_STREAMLIT.md) |
+| Hosted app: reference (settings, operations) | [docs/STREAMLIT_CLOUD.md](docs/STREAMLIT_CLOUD.md) |
 | **What to install on each Windows PC** (hosted app) | [docs/WINDOWS_PC_SETUP.md](docs/WINDOWS_PC_SETUP.md) |
 | Browser-side DYMO printing (how, safety, HTTPS/CORS/LNA findings) | [docs/BROWSER_PRINTING.md](docs/BROWSER_PRINTING.md) |
 | DYMO printing (local installation) | [docs/DYMO.md](docs/DYMO.md) |

@@ -46,6 +46,36 @@ jobs:
       - run: pip install -e ".[dev,ai,google,registry,cloud]"
       - run: python -m pytest -q -rs --ignore=tests/browser
 
+  streamlit-cloud:
+    # Same as Streamlit Community Cloud: Python 3.12, ONLY requirements.txt installed (not the package),
+    # `streamlit run src/vspm/ui/app.py` from the repository root, PostgreSQL database.
+    name: Streamlit Cloud deployment (requirements.txt only, Python 3.12)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: vspm_deploy
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Main file and component files exist
+        run: |
+          for f in src/vspm/ui/app.py requirements.txt .streamlit/config.toml \
+                   src/vspm/ui/dymo_bridge/static/index.html src/vspm/ui/dymo_bridge/static/bridge.js \
+                   src/vspm/ui/dymo_bridge/static/vendor/dymo.connect.framework.js; do
+            test -f "$f" || { echo "missing: $f"; exit 1; }
+          done
+      - run: pip install -r requirements.txt playwright
+      - run: python -m playwright install --with-deps chromium
+      - run: python scripts/check_cloud_deploy.py --database-url postgresql://postgres:postgres@localhost:5432/vspm_deploy
+
   browser-dymo:
     # Browser-side DYMO printing against a fake DYMO Web Service on https://127.0.0.1:41951,
     # with the app origin treated as a PUBLIC address (Local Network Access rules of the cloud).
