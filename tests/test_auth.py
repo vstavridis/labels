@@ -87,3 +87,17 @@ def test_blank_require_auth_means_default(settings, monkeypatch):
     from vspm.config import Settings
     monkeypatch.setenv("VSPM_REQUIRE_AUTH", "")
     assert Settings(_env_file=None).require_auth is None  # -> required whenever a database URL is set
+
+
+def test_app_shows_a_clear_page_when_the_database_cannot_be_reached(app_env, monkeypatch):
+    import socket
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    monkeypatch.setenv("VSPM_DATABASE_URL", f"postgresql://owner:TopSecret@127.0.0.1:{port}/neondb?connect_timeout=3")
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    text = " ".join(e.value for e in at.error)
+    assert "cannot be reached" in text and "TopSecret" not in text and "owner@127.0.0.1" in text
+    assert any("Retry" in b.label for b in at.button)

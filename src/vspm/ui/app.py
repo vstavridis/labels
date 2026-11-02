@@ -19,7 +19,19 @@ from vspm.ui.views import (  # noqa: E402
 )
 
 st.markdown(CSS, unsafe_allow_html=True)
-ctx = get_context()
+try:
+    ctx = get_context()
+except Exception as e:  # noqa: BLE001 - show a clear page instead of a stack trace
+    from vspm.db.postgres import DatabaseConnectError
+    st.title("🏷️ VS Production Manager")
+    if isinstance(e, DatabaseConnectError):
+        st.error("Η βάση δεδομένων δεν είναι προσβάσιμη / The database cannot be reached.\n\n" + str(e))
+    else:
+        st.error(f"The app could not start: {type(e).__name__}. Details: Manage app → logs.")
+    st.caption("VSPM_DATABASE_URL — Streamlit Cloud → ⋮ → Settings → Secrets. DEPLOY_STREAMLIT.md, step 1.")
+    if st.button("🔄 Retry / Ξανά"):
+        st.rerun()
+    st.stop()
 lang()
 access = auth.gate(ctx.settings)  # stops here unless the employee is signed in (cloud)
 if ctx.cloud is not None and not st.session_state.get("_templates_checked"):

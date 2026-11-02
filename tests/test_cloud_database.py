@@ -130,3 +130,38 @@ def test_cloud_excel_staging_and_reconcile_from_uploaded_copy(settings, tmp_path
     res = ctx.production.reconcile(settings.excel_path.read_bytes(), source="uploaded copy")
     assert res["synchronized"] == [out.barcode]
     assert ctx.repo.get_label(out.label_id)["excel_status"] == "synchronized"
+
+
+# ---- connection problems are explained, never a bare pool timeout ------------------------------------
+def test_connection_string_cleanup():
+    from vspm.db.postgres import clean_url
+    url = "postgresql://u:p@host.example/db?sslmode=require"
+    assert clean_url(f"  psql '{url}' ") == url
+    assert clean_url(url.replace("postgresql://", "postgres://")) == url
+    assert clean_url(url.replace("postgresql://", "postgresql+psycopg://")) == url
+
+
+def test_unreachable_database_gives_a_clear_message_without_the_password():
+    import socket
+    from vspm.db.postgres import DatabaseConnectError, PostgresDatabase
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]  # nothing listens here
+    with pytest.raises(DatabaseConnectError) as e:
+        PostgresDatabase(f"postgresql://neondb_owner:S3cretPw@127.0.0.1:{port}/neondb?connect_timeout=3")
+    msg = str(e.value)
+    assert "S3cretPw" not in msg and "neondb_owner@127.0.0.1" in msg and "did not answer" in msg
+    with pytest.raises(DatabaseConnectError, match="postgresql://"):
+        PostgresDatabase("mysql://x:y@host/db")
+
+
+@pg_only
+def test_wrong_password_is_explained():
+    from psycopg.conninfo import conninfo_to_dict
+    from vspm.db.postgres import DatabaseConnectError, PostgresDatabase
+    d = conninfo_to_dict(os.environ["VSPM_TEST_DATABASE_URL"])
+    bad = "postgresql://{user}:definitely-wrong-pw@{host}:{port}/{dbname}".format(
+        user=d.get("user"), host=d.get("host", "localhost"), port=d.get("port", 5432), dbname=d.get("dbname"))
+    with pytest.raises(DatabaseConnectError) as e:
+        PostgresDatabase(bad)
+    assert "definitely-wrong-pw" not in str(e.value) and "Wrong user name or password" in str(e.value)

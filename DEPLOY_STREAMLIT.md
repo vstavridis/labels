@@ -242,6 +242,7 @@ Your data stays in Neon.
 | *OneDrive item not found* for a link | Copy the link again in OneDrive (*Share → Copy link*). Still failing: enter the path inside your OneDrive instead, e.g. `Documents/Ετικέτες` |
 | A template shows *error* | The message says why (wrong counter prefix, file renamed). The previous version keeps being used |
 | Google Drive: *listing failed* / 404 | Share the folder with the service account e-mail (Viewer); Drive API enabled (step 3) |
+| *The database cannot be reached* (older versions: `psycopg_pool.PoolTimeout`) | The page now shows the reason. Most common: the connection string was pasted with extra text (`psql '…'`) or cut off — in Neon click **Connect**, choose *Connection string* (not *psql*), copy it whole into `VSPM_DATABASE_URL = "…"`; wrong password → Neon *Roles → Reset password* and copy again; Neon project deleted/suspended → open it in Neon. Save the Secrets, then **Retry** |
 | Database errors at start | Check `VSPM_DATABASE_URL` (copy again from Neon, keep `?sslmode=require`) |
 | *DYMO service: not found* on a PC | Step 7.2; then **Re-check** on the printer page |
 | *The browser blocks access to the DYMO service* | Address bar icon → Site settings → *Local network access* → **Allow** → reload |

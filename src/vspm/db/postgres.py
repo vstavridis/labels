@@ -132,6 +132,82 @@ class Connection:
 _POOLS: dict[str, Any] = {}
 
 
+class DatabaseConnectError(RuntimeError):
+    """The database could not be reached; the message is safe to show (no password)."""
+
+
+def clean_url(url: str) -> str:
+    """Accept the connection string as people paste it: surrounding spaces/quotes, a leading `psql`,
+    the `postgres://` or SQLAlchemy `postgresql+psycopg://` scheme."""
+    u = (url or "").strip()
+    if u.lower().startswith("psql "):
+        u = u[5:].strip()
+    u = u.strip("'\"").strip()
+    for prefix in ("postgresql+psycopg://", "postgres://"):
+        if u.startswith(prefix):
+            u = "postgresql://" + u[len(prefix):]
+    return u
+
+
+def _redact(text: str, url: str) -> str:
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        pw = conninfo_to_dict(url).get("password")
+    except Exception:  # noqa: BLE001
+        pw = None
+    if pw:
+        text = text.replace(pw, "***")
+    return re.sub(r"(postgres(?:ql)?://[^:/@\s]+:)[^@\s]+@", r"\1***@", text)
+
+
+def describe_target(url: str) -> str:
+    """'user@host:port/db' without the password (for messages)."""
+    from psycopg.conninfo import conninfo_to_dict
+
+    try:
+        d = conninfo_to_dict(url)
+    except Exception:  # noqa: BLE001
+        return "(unreadable connection string)"
+    return f"{d.get('user', '?')}@{d.get('host', '?')}:{d.get('port', 5432)}/{d.get('dbname', '?')}"
+
+
+def check_connection(url: str, timeout: int = 15) -> None:
+    """Connect once, directly, so the real reason of a failure is shown (a pool only times out)."""
+    import psycopg
+
+    if not url.startswith("postgresql://"):
+        raise DatabaseConnectError("VSPM_DATABASE_URL must start with postgresql:// (copy the connection string "
+                                   "from your database provider, e.g. Neon → Connect).")
+    try:
+        from psycopg.conninfo import conninfo_to_dict
+        conninfo_to_dict(url)
+    except Exception as e:  # noqa: BLE001
+        raise DatabaseConnectError("VSPM_DATABASE_URL is not a valid connection string "
+                                   f"({_redact(str(e), url)[:200]}). If the password contains special characters "
+                                   "(@ : / ? # %), copy the string again from the provider - it encodes them.") from e
+    try:
+        with psycopg.connect(url, connect_timeout=timeout, autocommit=True) as conn:
+            conn.execute("SELECT 1")
+    except Exception as e:  # noqa: BLE001
+        msg = _redact(str(e).strip(), url)
+        low = msg.lower()
+        if "password authentication failed" in low or "authentication failed" in low:
+            hint = "Wrong user name or password: copy the connection string again (Neon → Connect)."
+        elif "translate host name" in low or "name or service not known" in low or "nodename nor servname" in low:
+            hint = "The host name is wrong or the string is cut off: copy the whole connection string again."
+        elif "does not exist" in low and "database" in low:
+            hint = "The database name at the end of the string does not exist (Neon's default is neondb)."
+        elif "ssl" in low:
+            hint = "The server requires TLS: the string must end with ?sslmode=require."
+        elif "timeout" in low or "timed out" in low or "refused" in low:
+            hint = ("The server did not answer: check the host and port, that the database is not paused or "
+                    "deleted, and that it accepts connections from anywhere (no IP allow-list).")
+        else:
+            hint = "Check VSPM_DATABASE_URL in the Streamlit secrets."
+        raise DatabaseConnectError(f"Cannot connect to the database {describe_target(url)}: {msg[:300]}\n\n{hint}") from e
+
+
 def _pool(url: str, min_size: int, max_size: int):
     """One pool per database URL per process (Streamlit reruns and contexts share it)."""
     from psycopg_pool import ConnectionPool
@@ -144,7 +220,7 @@ def _pool(url: str, min_size: int, max_size: int):
 
 
 def close_pools(url_prefix: str = "") -> None:
-    for url in [u for u in _POOLS if u.startswith(url_prefix.replace("postgresql+psycopg://", "postgresql://", 1))]:
+    for url in [u for u in _POOLS if u.startswith(clean_url(url_prefix))]:
         _POOLS.pop(url).close()
 
 
@@ -152,8 +228,10 @@ class PostgresDatabase(DatabaseBase):
     backend = "postgresql"
 
     def __init__(self, url: str, *, min_size: int = 1, max_size: int = 4):
-        self.url = url.replace("postgresql+psycopg://", "postgresql://", 1)
+        self.url = clean_url(url)
         self.path = "postgresql"
+        if self.url not in _POOLS:
+            check_connection(self.url)  # clear reason instead of a pool timeout; nothing cached on failure
         self.pool = _pool(self.url, min_size, max_size)
         self._id_tables: set[str] = set()
         self.migrate()
