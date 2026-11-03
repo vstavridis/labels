@@ -248,3 +248,23 @@ def test_simultaneous_first_reports_from_one_station_do_not_crash(ctx):
     [t.join() for t in threads]
     assert errors == []
     assert ctx.browser.station("new-station")["printer_name"] == PRINTER
+
+
+def test_second_tab_in_the_gap_after_the_first_job_was_sent_cannot_print_again(ctx):
+    """Tab A's job is reported as sent; before the label is marked printed, tab B presses Print & Save."""
+    from vspm.services.browser_print import AlreadySent
+    verify_station(ctx)
+    rid = make_row(ctx)
+    job = start(ctx, rid)
+    callback = ctx.browser.on_label_result
+    ctx.browser.on_label_result = None  # freeze the moment between "job sent" and "label printed"
+    try:
+        report(ctx, job)
+    finally:
+        ctx.browser.on_label_result = callback
+    assert ctx.browser.job(job.job_key)["status"] == "submitted"
+    assert not ctx.repo.label_for_row(rid)["first_printed_at"]
+    with pytest.raises(AlreadySent):
+        ctx.production.start_browser_print(rid, session_id="sess-B", station_id=STATION, printer=PRINTER)
+    assert ctx.db.one("SELECT COUNT(*) FROM print_jobs WHERE label_id=?",
+                      (ctx.repo.label_for_row(rid)["id"],))[0] == 1

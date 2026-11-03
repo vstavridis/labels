@@ -39,6 +39,10 @@ class JobInProgress(BrowserPrintError):
     pass
 
 
+class AlreadySent(JobInProgress):
+    """A production label (not a reprint) whose earlier job was already sent to a printer."""
+
+
 @dataclass
 class PreparedJob:
     job_key: str
@@ -126,9 +130,20 @@ class BrowserPrintService:
         try:
             with self.db.transaction() as conn:
                 self._expire_stale(conn)
+                if kind != "reprint":
+                    # Checked inside the same (serialised) transaction that creates the job: another tab's
+                    # job may have been reported as sent a moment ago, before the label itself was marked
+                    # printed. Only an explicit reprint may print a label that was already sent.
+                    sent = conn.execute("SELECT job_key FROM print_jobs WHERE label_id=? AND status IN "
+                                        "('submitted','manual_confirmed') LIMIT 1", (lab["id"],)).fetchone()
+                    if sent is not None:
+                        raise AlreadySent(f"{lab['barcode']} has already been sent to a printer. Confirm it, or "
+                                          "use Reprint (same barcode) if it did not come out right.")
                 self._insert_job(conn, job, session_id, user)
                 self.db.audit("label", lab["id"], f"browser_{kind}_job_created", {"job": job.job_key}, user,
                               conn=conn)
+        except AlreadySent:
+            raise
         except Exception as e:  # unique index: another tab/PC is printing this label right now
             if "unique" in str(e).lower() or "ux_print_jobs_one_pending_per_label" in str(e):
                 raise JobInProgress(f"{lab['barcode']} is already being printed from another tab or computer. "
