@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import time
 
 import io
@@ -11,7 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Protocol
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 SUPPORTED_IMAGE = {"image/jpeg", "image/png", "image/tiff", "image/webp", "image/bmp", "image/gif"}
 SUPPORTED = SUPPORTED_IMAGE | {"application/pdf"}
@@ -302,26 +303,34 @@ def synthetic_scan_png(title: str = "MOCK") -> bytes:
 
 
 # ---- page rendering (preview + AI input) ----------------------------------------------------
+_PDFIUM_LOCK = threading.Lock()  # PDFium is not thread-safe; Streamlit runs each session in its own thread
+
+
 def page_images(data: bytes, mime_type: str, max_side: int = 2400, max_pages: int = 10) -> list[Image.Image]:
     if mime_type == "application/pdf":
         import pypdfium2 as pdfium  # type: ignore
-        pdf = pdfium.PdfDocument(data)
-        out = []
-        for i in range(min(len(pdf), max_pages)):
-            page = pdf[i]
-            w, h = page.get_size()
-            scale = min(max_side / max(w, h), 4.0)
-            out.append(page.render(scale=scale).to_pil().convert("RGB"))
+        with _PDFIUM_LOCK:
+            pdf = pdfium.PdfDocument(data)
+            try:
+                out = []
+                for i in range(min(len(pdf), max_pages)):
+                    page = pdf[i]
+                    w, h = page.get_size()
+                    scale = min(max_side / max(w, h), 4.0)
+                    out.append(page.render(scale=scale).to_pil().convert("RGB"))
+            finally:
+                pdf.close()
         return out
     img = Image.open(io.BytesIO(data))
     pages = []
     try:
         for i in range(max_pages):
             img.seek(i)
-            pages.append(_fit(img.convert("RGB"), max_side))
+            # Phone photos store their rotation in EXIF: apply it so the sheet is upright.
+            pages.append(_fit(ImageOps.exif_transpose(img).convert("RGB"), max_side))
     except EOFError:
         pass
-    return pages or [_fit(img.convert("RGB"), max_side)]
+    return pages or [_fit(ImageOps.exif_transpose(img).convert("RGB"), max_side)]
 
 
 def _fit(img: Image.Image, max_side: int) -> Image.Image:

@@ -2,8 +2,14 @@
 
 from __future__ import annotations
 
+import faulthandler
 import sys
 from pathlib import Path
+
+# If a native library crashes (segmentation fault), print where every thread was to the log
+# (Streamlit Cloud: Manage app -> logs) instead of dying silently.
+if not faulthandler.is_enabled():
+    faulthandler.enable(all_threads=True)
 
 if __package__ in (None, ""):  # launched by `streamlit run path/to/app.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
