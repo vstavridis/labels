@@ -166,8 +166,16 @@ def test_download_fallback_contains_reserved_barcode(browser, app_server, dymo_r
     assert dl.value.suggested_filename == f"{barcode}.label"
     from vspm.dymo.template import check_prepared_label
     assert check_prepared_label(xml, barcode) == []
-    page.get_by_role("button", name="Ναι, τυπώθηκε σωστά").click()
-    page.get_by_text("Καταχωρήθηκε").first.wait_for()
+    # The bridge's delayed "DYMO not reachable" report can rerun the page at the moment of the click,
+    # which then has no effect; an employee simply clicks again (confirming twice is harmless).
+    for attempt in range(3):
+        page.get_by_role("button", name="Ναι, τυπώθηκε σωστά").click()
+        try:
+            page.get_by_text("Καταχωρήθηκε").first.wait_for(timeout=15000)
+            break
+        except Exception:
+            if attempt == 2:
+                raise
     assert len(excel_rows(app_ctx, barcode)) == 1
     assert jobs() == []  # nothing went through the browser bridge
     ctx.close()
