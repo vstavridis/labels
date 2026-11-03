@@ -26,9 +26,24 @@ CSS = """
 """
 
 
+def _secrets_overrides() -> dict:
+    """Streamlit secrets given as TOML tables (root-level keys already arrive as environment variables).
+
+    [google_service_account] with the fields of the key file is an alternative to pasting the JSON
+    into VSPM_GOOGLE_CREDENTIALS_JSON."""
+    import json
+    try:
+        table = st.secrets.get("google_service_account")
+    except Exception:  # no secrets file
+        return {}
+    if table and hasattr(table, "keys"):
+        return {"google_credentials_json": json.dumps({k: table[k] for k in table.keys()})}
+    return {}
+
+
 @st.cache_resource(show_spinner=False)
 def get_context() -> AppContext:
-    s = Settings()
+    s = Settings(**_secrets_overrides())
     setup_logging(s)
     return build_context(s)
 

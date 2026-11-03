@@ -116,7 +116,7 @@ text editor (Notepad) and replace the placeholders:
 | `VSPM_ONEDRIVE_TEMPLATE_FILES` | the four exact file names: `VS=…label;PG=…label;PG0=…label;EX=…label` |
 | `VSPM_ONEDRIVE_WORKBOOK_URL` | link of `Σχισμενα.xlsx` |
 | `VSPM_ONEDRIVE_WORKBOOK_TEST_URL` | link of the COPY (step 3b.6) |
-| `VSPM_GOOGLE_CREDENTIALS_JSON` | the whole content of the service-account JSON file, between the `'''` |
+| `VSPM_GOOGLE_CREDENTIALS_JSON` | the whole content of the service-account JSON file, unchanged, between `'''` and `'''` (three **single** quotes, each on its own line). Alternative: delete that line and add a table `[google_service_account]` with the file's fields (`type = "service_account"`, `client_email = "…"`, `private_key = "…"`, `token_uri = "…"`, …) at the end of the Secrets |
 | `ANTHROPIC_API_KEY` | your Anthropic key |
 | `[auth]` `redirect_uri` | `https://YOUR-APP-NAME.streamlit.app/oauth2callback` |
 | `[auth]` `cookie_secret` | any long random text (at least 40 letters and digits, e.g. from a password manager) |
@@ -241,6 +241,7 @@ Your data stays in Neon.
 | *No Microsoft account is connected* / *sign-in expired* | Settings → Cloud sources → **Connect Microsoft account** again (also needed after ~90 days without use) |
 | *OneDrive item not found* for a link | Copy the link again in OneDrive (*Share → Copy link*). Still failing: enter the path inside your OneDrive instead, e.g. `Documents/Ετικέτες` |
 | A template shows *error* | The message says why (wrong counter prefix, file renamed). The previous version keeps being used |
+| *VSPM_GOOGLE_CREDENTIALS_JSON is not valid JSON / not a service-account key* | The message says the line and column. Paste the downloaded `.json` unchanged between `'''` and `'''`; it must be a *service account* key (Keys → Add key → JSON), not the OAuth client of step 2 |
 | Google Drive: *listing failed* / 404 | Share the folder with the service account e-mail (Viewer); Drive API enabled (step 3) |
 | *The database cannot be reached* (older versions: `psycopg_pool.PoolTimeout`) | The page now shows the reason. Most common: the connection string was pasted with extra text (`psql '…'`) or cut off — in Neon click **Connect**, choose *Connection string* (not *psql*), copy it whole into `VSPM_DATABASE_URL = "…"`; wrong password → Neon *Roles → Reset password* and copy again; Neon project deleted/suspended → open it in Neon. Save the Secrets, then **Retry** |
 | Database errors at start | Check `VSPM_DATABASE_URL` (copy again from Neon, keep `?sslmode=require`) |

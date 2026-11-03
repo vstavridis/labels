@@ -91,3 +91,42 @@ def test_missing_configuration_is_reported(tmp_path):
         GoogleDriveSource("", "service_account", tmp_path / "x.json", tmp_path / "t.json")
     with pytest.raises(DocumentSourceError, match="credentials file not found"):
         GoogleDriveSource(FOLDER, "service_account", tmp_path / "missing.json", tmp_path / "t.json")
+
+
+# ---- service-account key pasted into the Streamlit secrets ------------------------------------------
+import json as _json  # noqa: E402
+
+from vspm.integrations.documents import parse_service_account_json  # noqa: E402
+
+KEY = {"type": "service_account", "project_id": "p", "private_key_id": "abc",
+       "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n",
+       "client_email": "vspm-scans@p.iam.gserviceaccount.com", "token_uri": "https://oauth2.googleapis.com/token"}
+
+
+def test_service_account_key_as_downloaded():
+    assert parse_service_account_json(_json.dumps(KEY, indent=2))["client_email"] == KEY["client_email"]
+
+
+def test_service_account_key_pasted_between_double_quotes_toml_turned_newlines_real():
+    # TOML """...""" converts the \n escapes of the private key into real line breaks: strict JSON refuses it.
+    raw = _json.dumps(KEY, indent=2).replace("\\n", "\n")
+    with pytest.raises(ValueError):
+        _json.loads(raw)
+    info = parse_service_account_json(raw)
+    assert info["private_key"].startswith("-----BEGIN PRIVATE KEY-----\nMII")
+
+
+def test_service_account_key_wrapped_in_quotes_and_spaces():
+    assert parse_service_account_json("  '" + _json.dumps(KEY) + "'  ")["type"] == "service_account"
+
+
+def test_wrong_files_and_broken_json_explained_without_showing_the_key():
+    oauth_client = {"web": {"client_id": "x", "client_secret": "SECRET-VALUE"}}
+    with pytest.raises(DocumentSourceError, match="not a service-account key"):
+        parse_service_account_json(_json.dumps(oauth_client))
+    broken = _json.dumps(KEY)[:-5]
+    with pytest.raises(DocumentSourceError) as e:
+        parse_service_account_json(broken)
+    assert "line" in str(e.value) and "MIIEvQIBADAN" not in str(e.value)
+    with pytest.raises(DocumentSourceError, match="starting with"):
+        parse_service_account_json("credentials/google_service_account.json")

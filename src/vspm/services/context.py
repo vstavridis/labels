@@ -81,8 +81,11 @@ def build_context(s: Settings) -> AppContext:
     repo = Repository(db)
     customers = CustomerService(db, s.resolve(s.customers_config))
     if not s.resolve(s.customers_config).exists() and not customers.rules():
-        problems["customer_rules"] = (f"{s.customers_config} not found: no customer rules, every customer gets VS. "
-                                      "Copy config/customers.example.yaml and enter your real customers.")
+        problems["customer_rules"] = (
+            "No customer rules yet: every customer gets VS. Enter them in Settings → Customer rules (admin)."
+            if s.database_url else
+            f"{s.customers_config} not found: no customer rules, every customer gets VS. "
+            "Copy config/customers.example.yaml and enter your real customers.")
     try:
         overrides = parse_template_files(s.template_files)
     except ValueError as e:
@@ -94,7 +97,10 @@ def build_context(s: Settings) -> AppContext:
         try:
             templates.load(key)
         except Exception as e:
-            problems[f"template_{key.value}"] = str(e)
+            problems[f"template_{key.value}"] = (
+                f"No {key.value} template loaded yet. Settings → ☁️ Cloud sources → Connect Microsoft account → "
+                "Refresh DYMO templates (or upload it under Settings → DYMO templates)."
+                if s.database_url and templates.store.active(key) is None and "No template" in str(e) else str(e))
     transforms = Transforms.from_yaml(s.resolve(s.materials_config))
 
     registry_client = None

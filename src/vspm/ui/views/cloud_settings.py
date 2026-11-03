@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 
 import streamlit as st
 
@@ -24,8 +23,9 @@ def service_account_email(settings) -> str:
         except OSError:
             return ""
     try:
-        return json.loads(raw).get("client_email", "")
-    except ValueError:
+        from vspm.integrations.documents import parse_service_account_json
+        return parse_service_account_json(raw).get("client_email", "")
+    except Exception:  # noqa: BLE001
         return ""
 
 
@@ -114,6 +114,7 @@ def render(ctx) -> None:
     if b[1].button(T("cs_refresh_templates"), disabled=not admin, type="primary"):
         res = _run("OneDrive", lambda: cloud.templates.refresh(operator(), force=True))
         if res:
+            reload_context()  # the start-up warnings ("no template") are recomputed
             for r in res:
                 (st.success if r.status != "error" else st.error)(
                     f"{r.key}: {r.filename or '—'} — {r.status}" + (f" — {r.error}" if r.error else "")

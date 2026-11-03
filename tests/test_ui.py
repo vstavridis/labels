@@ -145,3 +145,20 @@ def test_cloud_sources_tab_connects_and_refreshes_templates(env, monkeypatch, tm
     ok = [s.value for s in at.success]
     assert sum(" — updated" in v for v in ok) == 4, ok
     assert get_context().templates.load("PG0").sha256
+
+
+def test_google_key_as_secrets_table(env):
+    """[google_service_account] in the Streamlit secrets instead of VSPM_GOOGLE_CREDENTIALS_JSON."""
+    from tests.test_drive import KEY
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = AppTest.from_string("""
+import json, streamlit as st
+from vspm.ui.common import get_context
+st.write(json.loads(get_context().settings.google_credentials_json)["client_email"])
+""", default_timeout=60)
+    at.secrets["google_service_account"] = dict(KEY)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.markdown[0].value == KEY["client_email"]
+    get_context.clear()

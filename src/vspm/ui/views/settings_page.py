@@ -102,6 +102,7 @@ def render() -> None:
                         ctx.customers.delete_rule(r.id)
                 ctx.db.audit("customer_rules", "-", "saved", {"count": len(kept)}, st.session_state.get("operator"))
                 flash("success", T("saved"))
+                reload_context()
             except Exception as e:
                 flash("error", str(e))
             st.rerun()

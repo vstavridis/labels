@@ -38,6 +38,44 @@ class DocumentSource(Protocol):
     def download(self, doc: RemoteDocument) -> bytes: ...
 
 
+SA_FIELDS = ("type", "client_email", "private_key", "token_uri")
+
+
+def parse_service_account_json(raw: str) -> dict:
+    """Read a Google service-account key pasted into the Streamlit secrets.
+
+    Accepted: the JSON exactly as downloaded, inside  (recommended) or """ """ - in the
+    latter TOML turns the \\n of the private key into real line breaks, which strict JSON
+    refuses; they are accepted here. Errors say where the problem is, never the key itself."""
+    import json
+
+    text = (raw or "").strip()
+    if len(text) >= 2 and text[0] in "'\"" and text[-1] == text[0] and text[1:].lstrip().startswith("{"):
+        text = text[1:-1].strip()
+    if not text.startswith("{"):
+        raise DocumentSourceError(
+            "VSPM_GOOGLE_CREDENTIALS_JSON must contain the whole service-account JSON file, starting with { . "
+            "In the Streamlit secrets write:  VSPM_GOOGLE_CREDENTIALS_JSON = ''' (new line) <paste the file> "
+            "(new line) '''")
+    try:
+        info = json.loads(text, strict=False)  # strict=False: real line breaks inside the private key
+    except ValueError as e:
+        line, col = getattr(e, "lineno", "?"), getattr(e, "colno", "?")
+        raise DocumentSourceError(
+            f"VSPM_GOOGLE_CREDENTIALS_JSON is not valid JSON (line {line}, column {col}: {getattr(e, 'msg', e)}). "
+            "Paste the downloaded .json file unchanged between ''' and ''' (three single quotes), "
+            "not between \"...\" and without editing it.") from e
+    if not isinstance(info, dict):
+        raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON must be a JSON object (the key file).")
+    missing = [f for f in SA_FIELDS if not info.get(f)]
+    if missing or info.get("type") != "service_account":
+        raise DocumentSourceError(
+            "VSPM_GOOGLE_CREDENTIALS_JSON is not a service-account key (missing: "
+            f"{', '.join(missing) or 'type=service_account'}). Create it under Google Cloud → IAM → Service "
+            "accounts → Keys → Add key → JSON (an OAuth client file does not work here).")
+    return info
+
+
 class GoogleDriveSource:
     """Google Drive API v3, read-only scope, restricted to one folder."""
 
@@ -56,13 +94,8 @@ class GoogleDriveSource:
         if credentials_json:  # Streamlit Cloud: the service-account key comes from the secrets, not a file
             if auth != "service_account":
                 raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON works only with VSPM_GOOGLE_AUTH=service_account")
-            import json
-
             from google.oauth2 import service_account  # type: ignore
-            try:
-                info = json.loads(credentials_json)
-            except ValueError as e:
-                raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON is not valid JSON") from e
+            info = parse_service_account_json(credentials_json)
             creds = service_account.Credentials.from_service_account_info(info, scopes=self.SCOPES)
         else:
             creds = self._credentials(auth, Path(credentials_file), Path(token_file))

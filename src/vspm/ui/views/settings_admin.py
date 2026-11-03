@@ -36,6 +36,8 @@ def templates_tab(ctx) -> None:
                 sha = ctx.templates.store.upload(TemplateKey(key), ctx.templates.spec(TemplateKey(key)), f.name,
                                                  f.getvalue(), operator())
                 flash("success", T("template_uploaded", k=key, s=sha[:12]))
+                from vspm.ui.common import reload_context
+                reload_context()
             except TemplateError as e:
                 flash("error", f"{f.name}: {e}")
             st.rerun()
