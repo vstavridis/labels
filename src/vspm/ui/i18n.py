@@ -120,7 +120,7 @@ STRINGS: dict[str, tuple[str, str]] = {
     "language": ("Γλώσσα", "Language"),
     "operator": ("Χειριστής", "Operator"),
     # dashboard
-    "latest_docs": ("Τελευταία 5 σκαναρισμένα έγγραφα", "Latest 5 scanned documents"),
+    "latest_docs": ("Τελευταία {n} σκαναρισμένα έγγραφα", "Latest {n} scanned documents"),
     "refresh": ("Ανανέωση", "Refresh"),
     "labels_today": ("Ετικέτες σήμερα", "Labels today"),
     "excel_pending": ("Excel σε αναμονή", "Excel pending"),

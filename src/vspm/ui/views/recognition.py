@@ -29,7 +29,7 @@ def render() -> None:
         st.error(ctx.problems.get("documents", "Document source not configured"))
         return
     try:
-        ctx.documents.latest(5)
+        ctx.documents.latest(ctx.settings.drive_latest_count)
     except Exception as e:
         st.warning(str(e))
     doc_id = doc_selector(ctx)
@@ -43,7 +43,7 @@ def render() -> None:
         rows = ctx.repo.rows_for_document(doc_id)
         s = ctx.settings
         st.markdown(f"**AI:** {s.ocr_provider.value} · {s.ocr_model}")
-        if s.ocr_provider.value == "anthropic" and not s.ocr_upload_consent:
+        if s.ocr_provider.value in ("anthropic", "openai") and not s.ocr_upload_consent:
             st.warning("Η αποστολή εγγράφων στην υπηρεσία AI δεν είναι ενεργή (VSPM_OCR_UPLOAD_CONSENT)."
                        if st.session_state["lang"] == "el" else
                        "Sending documents to the AI service is not enabled (VSPM_OCR_UPLOAD_CONSENT).")

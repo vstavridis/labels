@@ -12,7 +12,7 @@ that each print to their own DYMO printer. **No Python on the PCs.**
 ```
 
 Time needed: about 1 hour the first time. You need: a GitHub login (owner of `vstavridis/labels`),
-a Google account (for the login screen and Google Drive), your Anthropic API key, the four DYMO
+a Google account (for the login screen and Google Drive), your OpenAI API key (or Anthropic), the four DYMO
 `.label` templates (VS, PG, PG0, EX) and both PCs.
 
 > **Never put passwords or keys in the repository.** They go only into Streamlit's *Secrets* box (step 4).
@@ -74,7 +74,14 @@ Using Microsoft 365 accounts instead? See the Microsoft block in `.streamlit/sec
    (The app can only see what is shared with it, and can never change or delete scans.)
 6. Keep the folder link (`https://drive.google.com/drive/folders/…?usp=sharing`) for step 4.
 
-**AI reading:** your Anthropic API key from <https://console.anthropic.com> → *API keys*.
+**AI reading (OpenAI):** <https://platform.openai.com/api-keys> → **Create new secret key** → copy it
+(`OPENAI_API_KEY`). The account needs billing/credit (*Settings → Billing*). Anthropic remains available:
+`VSPM_OCR_PROVIDER = "anthropic"` with `ANTHROPIC_API_KEY`.
+
+**Which scans are listed:** the folder and **all its subfolders** (e.g. `PG/…`, `VS/…`), only `.jpg`
+files, the **10 newest** by upload time — change with `VSPM_DRIVE_RECURSIVE`, `VSPM_DRIVE_FILE_TYPES`
+(e.g. `jpg,pdf`), `VSPM_DRIVE_LATEST_COUNT`. Sharing the top folder with the service account covers
+all subfolders.
 
 ## Step 3b — Microsoft OneDrive access (templates and workbook)
 
@@ -117,7 +124,7 @@ text editor (Notepad) and replace the placeholders:
 | `VSPM_ONEDRIVE_WORKBOOK_URL` | link of `Σχισμενα.xlsx` |
 | `VSPM_ONEDRIVE_WORKBOOK_TEST_URL` | link of the COPY (step 3b.6) |
 | `VSPM_GOOGLE_CREDENTIALS_JSON` | the whole content of the service-account JSON file, unchanged, between `'''` and `'''` (three **single** quotes, each on its own line). Alternative: delete that line and add a table `[google_service_account]` with the file's fields (`type = "service_account"`, `client_email = "…"`, `private_key = "…"`, `token_uri = "…"`, …) at the end of the Secrets |
-| `ANTHROPIC_API_KEY` | your Anthropic key |
+| `OPENAI_API_KEY` | your OpenAI key (with `VSPM_OCR_PROVIDER = "openai"`) |
 | `[auth]` `redirect_uri` | `https://YOUR-APP-NAME.streamlit.app/oauth2callback` |
 | `[auth]` `cookie_secret` | any long random text (at least 40 letters and digits, e.g. from a password manager) |
 | `[auth]` `client_id` / `client_secret` | from step 2 |

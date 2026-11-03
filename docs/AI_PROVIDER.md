@@ -18,7 +18,13 @@
 
 ## Provider configuration
 
-Default provider: Anthropic Claude (`claude-opus-5-5`, effort `high`). Other providers can be added by
+Providers: **OpenAI** (`VSPM_OCR_PROVIDER=openai`, `OPENAI_API_KEY`, model `VSPM_OCR_OPENAI_MODEL`,
+default `gpt-5`; Structured Outputs with a strict schema of the same fields) and Anthropic Claude
+(`claude-opus-5-5`, effort `high`). Both use the same prompt, the same validation and the same review
+screen; nothing is printed without your approval. With OpenAI, each document you click *Read with AI*
+on is sent over HTTPS to OpenAI's API; under OpenAI's API terms, API data is not used for training by
+default and is retained for a limited period for abuse monitoring - check the current terms for your
+account. Other providers can be added by
 implementing the `OcrProvider` protocol (`extract(OcrInput) -> OcrOutput`) and wiring it in
 `services/context.py`.
 

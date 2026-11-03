@@ -43,12 +43,12 @@ def render() -> None:
         st.error(("Υπάρχουν εκκρεμότητες - δείτε το Ιστορικό." if st.session_state["lang"] == "el"
                   else "There are outstanding errors - see History."))
 
-    st.subheader(T("latest_docs"))
+    st.subheader(T("latest_docs", n=ctx.settings.drive_latest_count))
     if ctx.documents is None:
         st.error(ctx.problems.get("documents", "Document source not configured"))
         return
     try:
-        docs = ctx.documents.latest(5)
+        docs = ctx.documents.latest(ctx.settings.drive_latest_count)
     except Exception as e:
         st.error(str(e))
         return

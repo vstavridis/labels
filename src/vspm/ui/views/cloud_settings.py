@@ -187,7 +187,7 @@ def render(ctx) -> None:
         def test():
             if ctx.documents is None:
                 raise OneDriveError(ctx.problems.get("documents", "Google Drive is not configured"))
-            return ctx.documents.source.list_latest(5)
+            return ctx.documents.source.list_latest(ctx.settings.drive_latest_count)
         docs = _run("Google Drive", test)
         if docs is not None:
             st.success(T("cs_gdrive_ok", n=len(docs)))
@@ -196,6 +196,6 @@ def render(ctx) -> None:
         elif sa:
             st.caption(T("cs_gdrive_share", sa=sa))
     if b[1].button(T("cs_refresh_scans")):
-        docs = _run("Google Drive", lambda: ctx.documents.latest(5)) if ctx.documents else None
+        docs = _run("Google Drive", lambda: ctx.documents.latest(ctx.settings.drive_latest_count)) if ctx.documents else None
         if docs is not None:
             st.success(T("cs_gdrive_ok", n=len(docs)))

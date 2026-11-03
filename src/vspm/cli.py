@@ -103,7 +103,7 @@ def check():
                f"{ctx.writer.path} -> {'OK' if not problems else problems}")
     if ctx.documents:
         try:
-            docs = ctx.documents.source.list_latest(5)
+            docs = ctx.documents.source.list_latest(ctx.settings.drive_latest_count)
             typer.echo(f"Documents ({s.drive_mode.value}): {len(docs)} found")
         except Exception as e:
             typer.echo(f"Documents ({s.drive_mode.value}): PROBLEM - {e}")
@@ -185,7 +185,7 @@ def drive_test():
     if ctx.documents is None:
         typer.secho(f"Document source not available: {ctx.problems.get('documents')}", fg="red")
         raise typer.Exit(1)
-    docs = ctx.documents.source.list_latest(5)
+    docs = ctx.documents.source.list_latest(ctx.settings.drive_latest_count)
     typer.echo(f"Source: {ctx.settings.drive_mode.value}  ({len(docs)} documents)")
     for d in docs:
         typer.echo(f"  {d.uploaded_at}  {d.mime_type:18s} {d.name}  rev={d.revision[:12]}")

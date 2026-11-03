@@ -27,6 +27,7 @@ class DriveMode(str, Enum):
 
 class OcrProvider(str, Enum):
     anthropic = "anthropic"
+    openai = "openai"
     mock = "mock"
     disabled = "disabled"
 
@@ -83,6 +84,8 @@ class Settings(BaseSettings):
     ocr_server_fallbacks: bool = True
     ocr_upload_consent: bool = False
     anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
+    ocr_openai_model: str = "gpt-5"  # OpenAI vision model with structured outputs (VSPM_OCR_OPENAI_MODEL)
 
     printer_mode: PrinterMode = PrinterMode.mock
     printer_name: str = "DYMO LabelWriter Wireless"
@@ -111,7 +114,10 @@ class Settings(BaseSettings):
     onedrive_template_files: str = ""  # exact names: "VS=…label;PG=…label;PG0=…label;EX=…label" (empty = by COUNTER)
     onedrive_workbook_url: str = ""  # production workbook (Σχισμενα.xlsx)
     onedrive_workbook_test_url: str = ""  # a separate COPY used for the end-to-end test
-    gdrive_folder_url: str = ""  # Google Drive folder with the scans (overrides VSPM_DRIVE_FOLDER_ID)
+    gdrive_folder_url: str = ""
+    drive_recursive: bool = True  # also search all subfolders (e.g. PG/…, VS/…)
+    drive_file_types: str = "jpg"  # comma-separated: jpg, png, pdf, … (empty = PDF and all images)
+    drive_latest_count: int = 10  # how many of the newest scans are listed  # Google Drive folder with the scans (overrides VSPM_DRIVE_FOLDER_ID)
     ms_client_id: str = ""  # Entra app registration (public client, personal accounts)
     ms_tenant: str = "consumers"
     secret_key: str = ""  # encrypts stored OAuth tokens (Streamlit secrets only)
@@ -222,6 +228,7 @@ class Settings(BaseSettings):
         """Settings safe to display (no secrets)."""
         d = self.model_dump()
         d["anthropic_api_key"] = "set" if self.anthropic_api_key else "not set"
+        d["openai_api_key"] = "set" if self.openai_api_key else "not set"
         d["registry_api_key"] = "set" if self.registry_api_key else "not set"
         d["google_credentials_json"] = "set" if self.google_credentials_json else "not set"
         d["secret_key"] = "set" if self.secret_key else "not set"

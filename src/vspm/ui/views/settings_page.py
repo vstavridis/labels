@@ -19,7 +19,7 @@ ENV_FIELDS = [
     ("VSPM_GOOGLE_AUTH", ["service_account", "oauth"]),
     ("VSPM_GOOGLE_CREDENTIALS_FILE", None),
     ("VSPM_LOCAL_SCAN_DIR", None),
-    ("VSPM_OCR_PROVIDER", ["anthropic", "mock", "disabled"]),
+    ("VSPM_OCR_PROVIDER", ["anthropic", "openai", "mock", "disabled"]),
     ("VSPM_OCR_MODEL", None),
     ("VSPM_OCR_EFFORT", ["low", "medium", "high", "xhigh", "max"]),
     ("VSPM_OCR_UPLOAD_CONSENT", ["false", "true"]),
@@ -126,7 +126,7 @@ def render() -> None:
             (st.success if not probs else st.error)(f"Excel: {ctx.writer.path} {'OK' if not probs else probs}")
             if ctx.documents:
                 try:
-                    n = len(ctx.documents.source.list_latest(5))
+                    n = len(ctx.documents.source.list_latest(ctx.settings.drive_latest_count))
                     st.success(f"Documents ({ctx.settings.drive_mode.value}): {n}")
                 except Exception as e:
                     st.error(f"Documents: {e}")

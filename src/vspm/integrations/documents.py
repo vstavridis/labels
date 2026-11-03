@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import io
 import mimetypes
 from dataclasses import dataclass
@@ -83,7 +85,9 @@ class GoogleDriveSource:
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
     def __init__(self, folder_id: str, auth: str, credentials_file: Path, token_file: Path,
-                 credentials_json: str = ""):
+                 credentials_json: str = "", recursive: bool = False, file_types: Optional[list[str]] = None):
+        self.recursive = recursive
+        self.file_types = file_types
         if not folder_id:
             raise DocumentSourceError("VSPM_DRIVE_FOLDER_ID is not set")
         self.folder_id = folder_id
@@ -123,22 +127,87 @@ class GoogleDriveSource:
             token_file.write_text(creds.to_json(), encoding="utf-8")
         return creds
 
+    FOLDER_MIME = "application/vnd.google-apps.folder"
+    FILE_TYPES = {"jpg": ["image/jpeg"], "jpeg": ["image/jpeg"], "png": ["image/png"], "pdf": ["application/pdf"],
+                  "tif": ["image/tiff"], "tiff": ["image/tiff"], "heic": ["image/heic"]}
+    BATCH = 30  # folders per query ('a' in parents or 'b' in parents ...)
+    TREE_TTL = 300.0  # seconds the folder tree is reused
+
+    recursive: bool = False
+    file_types: Optional[list[str]] = None
+    _tree: Optional[dict[str, str]] = None
+    _tree_at: float = 0.0
+
+    def _mime_clause(self) -> str:
+        if not self.file_types:
+            return "(mimeType = 'application/pdf' or mimeType contains 'image/')"
+        mimes: list[str] = []
+        for t in self.file_types:
+            for m in self.FILE_TYPES.get(t.strip().lower().lstrip("."), []):
+                if m not in mimes:
+                    mimes.append(m)
+        if not mimes:
+            raise DocumentSourceError(f"Unknown file types {self.file_types} (use e.g. jpg, png, pdf)")
+        return "(" + " or ".join(f"mimeType = '{m}'" for m in mimes) + ")"
+
+    def _list(self, q: str, order: Optional[str], page_size: int, max_items: Optional[int] = None) -> list[dict]:
+        out: list[dict] = []
+        token = None
+        while True:
+            kw = dict(q=q, pageSize=page_size, supportsAllDrives=True, includeItemsFromAllDrives=True,
+                      fields="nextPageToken,files(id,name,mimeType,parents,createdTime,modifiedTime,md5Checksum,"
+                             "headRevisionId,size)")
+            if order:
+                kw["orderBy"] = order
+            if token:
+                kw["pageToken"] = token
+            try:
+                resp = self.service.files().list(**kw).execute()
+            except Exception as e:  # googleapiclient.errors.HttpError and transport errors
+                raise DocumentSourceError(f"Google Drive listing failed: {e}") from e
+            out += resp.get("files", [])
+            token = resp.get("nextPageToken")
+            if not token or (max_items is not None and len(out) >= max_items):
+                return out
+
+    def folder_tree(self, max_folders: int = 5000) -> dict[str, str]:
+        """{folder id: path below the scans folder} for the folder and all its subfolders."""
+        if self._tree is not None and time.monotonic() - self._tree_at < self.TREE_TTL:
+            return self._tree
+        paths = {self.folder_id: ""}
+        frontier = [self.folder_id]
+        while frontier and len(paths) < max_folders:
+            nxt: list[str] = []
+            for i in range(0, len(frontier), self.BATCH):
+                batch = frontier[i:i + self.BATCH]
+                parents = " or ".join(f"'{fid}' in parents" for fid in batch)
+                for f in self._list(f"({parents}) and mimeType = '{self.FOLDER_MIME}' and trashed = false", None,
+                                    1000):
+                    if f["id"] in paths:
+                        continue
+                    parent = next((p for p in f.get("parents", []) if p in paths), batch[0])
+                    paths[f["id"]] = (paths[parent] + "/" if paths[parent] else "") + f["name"]
+                    nxt.append(f["id"])
+            frontier = nxt
+        self._tree, self._tree_at = paths, time.monotonic()
+        return paths
+
     def list_latest(self, n: int = 5) -> list[RemoteDocument]:
-        q = (f"'{self.folder_id}' in parents and trashed = false and "
-             "(mimeType = 'application/pdf' or mimeType contains 'image/')")
-        try:
-            resp = self.service.files().list(
-                q=q, orderBy="createdTime desc", pageSize=n, supportsAllDrives=True,
-                includeItemsFromAllDrives=True,
-                fields="files(id,name,mimeType,createdTime,modifiedTime,md5Checksum,headRevisionId,size)",
-            ).execute()
-        except Exception as e:  # googleapiclient.errors.HttpError and transport errors
-            raise DocumentSourceError(f"Google Drive listing failed: {e}") from e
+        """The n newest scans (by upload time) in the folder - and, if recursive, in all its subfolders."""
+        tree = self.folder_tree() if self.recursive else {self.folder_id: ""}
+        ids = list(tree)
+        found: list[dict] = []
+        for i in range(0, len(ids), self.BATCH):
+            parents = " or ".join(f"'{fid}' in parents" for fid in ids[i:i + self.BATCH])
+            found += self._list(f"({parents}) and trashed = false and {self._mime_clause()}", "createdTime desc",
+                                n, max_items=n)
+        found.sort(key=lambda f: f.get("createdTime") or "", reverse=True)
         out = []
-        for f in resp.get("files", []):
+        for f in found[:n]:
+            folder = next((tree[p] for p in f.get("parents", []) if p in tree), "")
             rev = f.get("md5Checksum") or f.get("headRevisionId") or f.get("modifiedTime", "")
-            out.append(RemoteDocument(f["id"], f["name"], f["mimeType"], f.get("createdTime"), rev,
-                                      int(f["size"]) if f.get("size") else None, "google"))
+            out.append(RemoteDocument(f["id"], f"{folder}/{f['name']}" if folder else f["name"], f["mimeType"],
+                                      f.get("createdTime"), rev, int(f["size"]) if f.get("size") else None, "google"))
         return out
 
     def download(self, doc: RemoteDocument) -> bytes:
@@ -151,11 +220,14 @@ class GoogleDriveSource:
         return bytes(data)
 
     @classmethod
-    def with_service(cls, folder_id: str, service) -> "GoogleDriveSource":
+    def with_service(cls, folder_id: str, service, recursive: bool = False,
+                     file_types: Optional[list[str]] = None) -> "GoogleDriveSource":
         """Use an already-built Drive service (tests, custom authentication)."""
         obj = cls.__new__(cls)
         obj.folder_id = folder_id
         obj.service = service
+        obj.recursive = recursive
+        obj.file_types = file_types
         return obj
 
 

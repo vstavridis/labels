@@ -130,3 +130,88 @@ def test_wrong_files_and_broken_json_explained_without_showing_the_key():
     assert "line" in str(e.value) and "MIIEvQIBADAN" not in str(e.value)
     with pytest.raises(DocumentSourceError, match="starting with"):
         parse_service_account_json("credentials/google_service_account.json")
+
+
+# ---- recursive listing: PG/… and VS/… with nested subfolders, only .jpg, newest 10 ------------------
+import re as _re  # noqa: E402
+
+FOLDER_MIME = "application/vnd.google-apps.folder"
+
+
+class TreeFiles:
+    """Fake Drive files() that evaluates the queries the connector sends."""
+
+    def __init__(self, items):
+        self.items = items
+        self.queries = []
+
+    def list(self, **kw):
+        q = kw["q"]
+        self.queries.append(q)
+        parents = set(_re.findall(r"'([^']+)' in parents", q))
+        res = [f for f in self.items if set(f["parents"]) & parents and not f.get("trashed")]
+        if f"mimeType = '{FOLDER_MIME}'" in q:
+            res = [f for f in res if f["mimeType"] == FOLDER_MIME]
+        else:
+            mimes = _re.findall(r"mimeType = '([^']+)'", q)
+            res = [f for f in res if f["mimeType"] in mimes]
+        if kw.get("orderBy") == "createdTime desc":
+            res.sort(key=lambda f: f["createdTime"], reverse=True)
+        return FakeRequest({"files": res[: kw["pageSize"]]})
+
+
+def tree_service():
+    items = []
+
+    def folder(fid, name, parent):
+        items.append({"id": fid, "name": name, "mimeType": FOLDER_MIME, "parents": [parent], "createdTime": "2026"})
+
+    def scan(fid, name, parent, day, mime="image/jpeg"):
+        items.append({"id": fid, "name": name, "mimeType": mime, "parents": [parent],
+                      "createdTime": f"2026-10-{day:02d}T08:00:00Z", "md5Checksum": f"m{fid}", "size": "10"})
+
+    folder("pg", "PG", FOLDER)
+    folder("vs", "VS", FOLDER)
+    folder("pg-oct", "ΟΚΤΩΒΡΙΟΣ", "pg")
+    folder("pg-oct-w1", "ΕΒΔ 1", "pg-oct")
+    folder("vs-a", "ΠΕΛΑΤΗΣ Α", "vs")
+    day = 1
+    for parent in ("pg", "pg-oct", "pg-oct-w1", "vs", "vs-a"):
+        for k in range(3):
+            scan(f"{parent}-{k}", f"scan{k}.jpg", parent, day)
+            day += 1
+    scan("pdf1", "newest.pdf", "vs-a", 30, mime="application/pdf")  # newest, but not a .jpg
+    scan("png1", "newer.png", "pg", 29, mime="image/png")
+    scan("old-root", "root.jpg", FOLDER, 0 + 1)
+    svc = FakeService([], {})
+    svc._files = TreeFiles(items)
+    return svc
+
+
+def test_recursive_latest_jpgs_from_all_subfolders():
+    svc = tree_service()
+    src = GoogleDriveSource.with_service(FOLDER, svc, recursive=True, file_types=["jpg"])
+    docs = src.list_latest(10)
+    assert len(docs) == 10 and all(d.mime_type == "image/jpeg" for d in docs)
+    days = [d.uploaded_at for d in docs]
+    assert days == sorted(days, reverse=True) and days[0] == "2026-10-15T08:00:00Z"
+    assert docs[0].name == "VS/ΠΕΛΑΤΗΣ Α/scan2.jpg"  # path below the scans folder is shown
+    assert any(d.name.startswith("PG/ΟΚΤΩΒΡΙΟΣ/ΕΒΔ 1/") for d in docs)
+    assert all("trashed = false" in q for q in svc.files().queries)
+
+
+def test_non_recursive_and_type_filter():
+    svc = tree_service()
+    assert [d.name for d in GoogleDriveSource.with_service(FOLDER, svc, file_types=["jpg"]).list_latest(10)] == ["root.jpg"]
+    with pytest.raises(DocumentSourceError, match="Unknown file types"):
+        GoogleDriveSource.with_service(FOLDER, svc, file_types=["docx"]).list_latest(10)
+
+
+def test_folder_tree_is_cached():
+    svc = tree_service()
+    src = GoogleDriveSource.with_service(FOLDER, svc, recursive=True, file_types=["jpg"])
+    src.list_latest(10)
+    n = len(svc.files().queries)
+    src.list_latest(10)
+    folder_queries = [q for q in svc.files().queries[n:] if FOLDER_MIME in q]
+    assert folder_queries == []  # second refresh: only the file query, no tree walk

@@ -57,6 +57,10 @@ class AppContext:
             raise RuntimeError("AI reading is disabled (VSPM_OCR_PROVIDER=disabled)")
         if s.ocr_provider == OcrMode.mock:
             return MockOcr()
+        if s.ocr_provider == OcrMode.openai:
+            from vspm.integrations.ocr.openai_provider import OpenAIOcr
+            return OpenAIOcr(api_key=s.openai_api_key, model=s.ocr_openai_model, effort=s.ocr_effort,
+                             upload_consent=s.ocr_upload_consent)
         return AnthropicOcr(api_key=s.anthropic_api_key, model=s.ocr_model, effort=s.ocr_effort,
                             upload_consent=s.ocr_upload_consent, server_fallbacks=s.ocr_server_fallbacks)
 
@@ -163,7 +167,9 @@ def build_context(s: Settings) -> AppContext:
             except ValueError as e:
                 raise RuntimeError(f"Google Drive folder link: {e}") from e
             source = GoogleDriveSource(folder_id, s.google_auth, s.resolve(s.google_credentials_file),
-                                       s.resolve(s.google_token_file), s.google_credentials_json)
+                                       s.resolve(s.google_token_file), s.google_credentials_json,
+                                       recursive=s.drive_recursive,
+                                       file_types=[t for t in s.drive_file_types.split(",") if t.strip()] or None)
         elif s.drive_mode == DriveMode.local:
             source = LocalFolderSource(s.resolve(s.local_scan_dir))
         else:
