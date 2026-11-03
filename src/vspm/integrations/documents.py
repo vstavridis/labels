@@ -84,10 +84,13 @@ class GoogleDriveSource:
 
     name = "google"
     SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+    WRITE_SCOPES = ["https://www.googleapis.com/auth/drive"]  # only to write barcodes onto the scans
 
     def __init__(self, folder_id: str, auth: str, credentials_file: Path, token_file: Path,
-                 credentials_json: str = "", recursive: bool = False, file_types: Optional[list[str]] = None):
+                 credentials_json: str = "", recursive: bool = False, file_types: Optional[list[str]] = None,
+                 write: bool = False):
         self.recursive = recursive
+        self.write = write
         self.file_types = file_types
         if not folder_id:
             raise DocumentSourceError("VSPM_DRIVE_FOLDER_ID is not set")
@@ -101,7 +104,8 @@ class GoogleDriveSource:
                 raise DocumentSourceError("VSPM_GOOGLE_CREDENTIALS_JSON works only with VSPM_GOOGLE_AUTH=service_account")
             from google.oauth2 import service_account  # type: ignore
             info = parse_service_account_json(credentials_json)
-            creds = service_account.Credentials.from_service_account_info(info, scopes=self.SCOPES)
+            creds = service_account.Credentials.from_service_account_info(
+                info, scopes=self.WRITE_SCOPES if write else self.SCOPES)
         else:
             creds = self._credentials(auth, Path(credentials_file), Path(token_file))
         self.service = build("drive", "v3", credentials=creds, cache_discovery=False)
@@ -220,6 +224,39 @@ class GoogleDriveSource:
             raise DocumentSourceError(f"Download of {doc.name} returned no data")
         return bytes(data)
 
+    # ---- writing barcodes onto a scan (service account with Editor role on the folder) ---------------
+    def file_meta(self, file_id: str) -> dict:
+        try:
+            return self.service.files().get(fileId=file_id, supportsAllDrives=True,
+                                            fields="id,name,mimeType,md5Checksum,headRevisionId").execute()
+        except Exception as e:
+            raise DocumentSourceError(f"Google Drive: cannot read the file details ({e})") from e
+
+    def keep_revision_forever(self, file_id: str, revision_id: str) -> None:
+        try:
+            self.service.revisions().update(fileId=file_id, revisionId=revision_id,
+                                            body={"keepForever": True}).execute()
+        except Exception as e:
+            raise DocumentSourceError(f"Google Drive: cannot keep the original version ({e}). The service "
+                                      "account needs the Editor role on the scans folder.") from e
+
+    def download_revision(self, file_id: str, revision_id: str) -> bytes:
+        try:
+            data = self.service.revisions().get_media(fileId=file_id, revisionId=revision_id).execute()
+        except Exception as e:
+            raise DocumentSourceError(f"Google Drive: cannot read the original version ({e})") from e
+        return bytes(data)
+
+    def replace_content(self, file_id: str, data: bytes, mime_type: str) -> dict:
+        from googleapiclient.http import MediaIoBaseUpload  # type: ignore
+        try:
+            return self.service.files().update(
+                fileId=file_id, supportsAllDrives=True, fields="md5Checksum,headRevisionId",
+                media_body=MediaIoBaseUpload(io.BytesIO(data), mimetype=mime_type, resumable=False)).execute()
+        except Exception as e:
+            raise DocumentSourceError(f"Google Drive: cannot save the photo ({e}). The service account needs "
+                                      "the Editor role on the scans folder.") from e
+
     @classmethod
     def with_service(cls, folder_id: str, service, recursive: bool = False,
                      file_types: Optional[list[str]] = None) -> "GoogleDriveSource":
@@ -229,6 +266,7 @@ class GoogleDriveSource:
         obj.service = service
         obj.recursive = recursive
         obj.file_types = file_types
+        obj.write = False
         return obj
 
 

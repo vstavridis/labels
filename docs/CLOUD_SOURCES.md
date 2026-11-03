@@ -81,3 +81,22 @@ Every production record is first stored in PostgreSQL (label row + Excel payload
   (`drive.readonly`): scans are never modified or deleted.
 * The page lists the 5 newest PDFs/images; changed or re-uploaded files are detected by checksum /
   revision and a re-read never duplicates printed rows (existing duplicate protection).
+
+### Barcodes written onto the scans (`VSPM_DRIVE_STAMP_BARCODES`, default on)
+
+Needs the service account to have the **Editor** role on the scans folder (scope `drive`).
+After a label's **first** print, its barcode is written in red into the row's **BARCODE** cell of the
+photo, and the photo is saved back to the same Drive file (in the background; printing never waits).
+
+* The table is found from its printed lines: the BARCODE column is the rightmost column, data row N is
+  the N-th row under the header. If the table cannot be recognised with confidence, nothing is guessed:
+  the barcodes are listed in a white strip added under the photo (`#N - barcode`).
+* The **original scan stays in the file's version history**, marked *keep forever* (Drive → right-click →
+  *Manage versions*). Every stamp is drawn on that original with all barcodes printed so far, so two PCs
+  printing rows of the same sheet give the same picture and quality does not degrade.
+* Our own stamped version is recognised (fingerprint), so it is not treated as a re-scan; the AI always
+  reads the original. If someone **replaces** the photo in Drive (re-scan), the app does not overwrite
+  it and shows the reason in Settings → Cloud sources (*Write barcodes onto scans now* retries).
+* Row numbers follow the order of the rows the AI read; if a sheet has empty lines between filled
+  rows, check the result once.
+

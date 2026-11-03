@@ -199,3 +199,22 @@ def render(ctx) -> None:
         docs = _run("Google Drive", lambda: ctx.documents.latest(ctx.settings.drive_latest_count, refresh=True)) if ctx.documents else None
         if docs is not None:
             st.success(T("cs_gdrive_ok", n=len(docs)))
+
+    # ---- barcodes written onto the scans --------------------------------------------------------
+    stamper = getattr(ctx, "stamper", None)
+    if stamper is not None and stamper.enabled:
+        st.markdown("**" + T("cs_stamp_title") + "**")
+        st.caption(T("cs_stamp_help"))
+        recs = ctx.db.query("SELECT d.name, s.status, s.mode, s.error, s.updated_at FROM document_stamps s "
+                            "JOIN documents d ON d.id = s.document_id ORDER BY s.updated_at DESC LIMIT 20")
+        if recs:
+            st.dataframe([{T("cs_file"): r["name"], "": "✅" if r["status"] == "done" else "❌",
+                           T("cs_stamp_mode"): r["mode"] or "", T("cs_error"): r["error"] or "",
+                           T("cs_last_sync"): (r["updated_at"] or "")[:19]} for r in recs],
+                         hide_index=True, width="stretch")
+        pending = stamper.pending_documents() if stamper.available() else []
+        if admin and st.button(T("cs_stamp_now", n=len(pending)), disabled=not pending):
+            for doc_id in pending:
+                res = _run("Google Drive", lambda d=doc_id: stamper.stamp_document(d, operator()))
+                if res:
+                    st.success(f"#{doc_id}: {res}")

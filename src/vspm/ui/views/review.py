@@ -74,8 +74,9 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
             row.template_key = TemplateKey(er["template"]) if _s(er.get("template")) else sel.template_key
             row.template_suggested = sel.template_key
             row.template_reason = "added manually; " + sel.reason
-            if not row.customer_short:
-                row.customer_short = sel.short_name
+            if not row.customer_short or getattr(ctx.customers, "label_same_as_full", False):
+                row.customer_short = row.customer_full if getattr(ctx.customers, "label_same_as_full", False) \
+                    else sel.short_name
             ctx.repo.add_row(row)
             continue
         row = ctx.repo.get_row(int(rid))
@@ -99,6 +100,9 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
                     row.template_key = sel.template_key
                     row.template_reason = sel.reason
                     row.template_needs_confirmation = sel.needs_confirmation
+        if getattr(ctx.customers, "label_same_as_full", False):
+            row.customer_short = row.customer_full
+            row.flags.pop("customer_short", None)
         new_tpl = _s(er.get("template"))
         if new_tpl and (row.template_key is None or new_tpl != row.template_key.value):
             row.template_key = TemplateKey(new_tpl)
@@ -158,8 +162,12 @@ def render() -> None:
             "status": st.column_config.TextColumn(T("status"), disabled=True),
             "barcode": st.column_config.TextColumn(T("barcode"), disabled=True),
         }
+        same = getattr(ctx.customers, "label_same_as_full", False)
         for f, el, eng in FIELDS:
             colcfg[f] = st.column_config.TextColumn(eng if en else el)
+        if same:  # one customer value: printed on the label and written to Excel F as entered
+            colcfg["customer_full"] = st.column_config.TextColumn("Customer" if en else "ΠΕΛΑΤΗΣ")
+            colcfg["customer_short"] = None
         edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
                                 width="stretch", key=f"editor_{doc_id}_{len(rows)}")
         for r in rows:

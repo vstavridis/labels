@@ -138,6 +138,7 @@ class ProductionService:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self.labels_dir = settings.data_path / "labels"
         self.browser = None
+        self.photo_stamper = None  # PhotoStamper, set by build_context
         self.cloud_excel = None  # WorkbookSync (VSPM_EXCEL_MODE=onedrive), set by build_context
 
     # ---- helpers ------------------------------------------------------------------
@@ -161,7 +162,14 @@ class ProductionService:
     def _who(self, operator: Optional[str]) -> tuple[str, str]:
         return operator or self.s.effective_operator, self.s.effective_computer_name
 
+    def _effective(self, row: ProductionRow) -> ProductionRow:
+        """With VSPM_CUSTOMER_LABEL_SAME_AS_FULL the label shows the customer exactly as entered."""
+        if self.s.customer_label_same_as_full and row.customer_full and row.customer_short != row.customer_full:
+            return row.model_copy(update={"customer_short": row.customer_full})
+        return row
+
     def check_printable(self, row: ProductionRow) -> dict[str, str]:
+        row = self._effective(row)
         errors = validate_row(row)
         if not row.approved:
             errors.setdefault("approved", "row must be approved by the operator")
@@ -180,6 +188,7 @@ class ProductionService:
         """PNG preview for a row (proposed or existing barcode)."""
         if row.template_key is None:
             raise ProductionError("Select a label template first")
+        row = self._effective(row)
         spec = self.templates.spec(row.template_key)
         tpl = self.templates.load(row.template_key)
         label = self.repo.label_for_row(row.id) if row.id else None
@@ -254,7 +263,7 @@ class ProductionService:
             spec = self.templates.spec(row.template_key)
             tpl = self.templates.load(row.template_key)
             res = self._reserve(row, spec.barcode_prefix, op, pc)
-            content = build_label_content(row, spec, self.transforms, res.barcode)
+            content = build_label_content(self._effective(row), spec, self.transforms, res.barcode)
             label_id = self._create_label(row, res, content, op, pc, template_sha256=tpl.sha256)
             label = self.repo.get_label(label_id)
         return label
@@ -382,6 +391,8 @@ class ProductionService:
         if lab["excel_status"] == ExcelStatus.not_queued.value:
             self._queue_excel(lab, op)
             msgs.extend(self.sync_excel(lid, operator=op))
+        if first_success and self.photo_stamper is not None:
+            self.photo_stamper.request_for_row(lab["production_row_id"])  # background, never blocks printing
         lab = self.repo.get_label(lid)
         return Outcome(lid, lab["barcode"], lab["print_status"], lab["excel_status"], msgs, True)
 

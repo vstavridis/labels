@@ -268,3 +268,15 @@ def test_second_tab_in_the_gap_after_the_first_job_was_sent_cannot_print_again(c
         ctx.production.start_browser_print(rid, session_id="sess-B", station_id=STATION, printer=PRINTER)
     assert ctx.db.one("SELECT COUNT(*) FROM print_jobs WHERE label_id=?",
                       (ctx.repo.label_for_row(rid)["id"],))[0] == 1
+
+
+def test_customer_on_label_and_excel_is_the_customer_as_entered(ctx, settings):
+    """VSPM_CUSTOMER_LABEL_SAME_AS_FULL (default): one customer value."""
+    verify_station(ctx)
+    rid = make_row(ctx, customer_full="ΜΕΤΑΛΙΚΟ ΧΑΧΗ", customer_short="ΚΑΤΙ ΑΛΛΟ")
+    job = start(ctx, rid)
+    assert "ΜΕΤΑΛΙΚΟ ΧΑΧΗ" in job.label_xml and "ΚΑΤΙ ΑΛΛΟ" not in job.label_xml
+    report(ctx, job)
+    from vspm.excel.xlsx_package import SheetEditor, XlsxPackage
+    ed = SheetEditor(XlsxPackage(settings.excel_path.read_bytes()), settings.excel_sheet)
+    assert ed.value(excel_rows(settings, job.barcode)[0], "F").value == "ΜΕΤΑΛΙΚΟ ΧΑΧΗ"

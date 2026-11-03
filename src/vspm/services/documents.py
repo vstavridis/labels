@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 
@@ -41,6 +42,7 @@ class DocumentService:
         self.cache_dir = Path(cache_dir)
         self._listing = None
         self._listing_lock = threading.Lock()
+        self.stamper = None  # PhotoStamper: barcodes written onto the scans
 
     LISTING_TTL = 60.0  # seconds a Drive listing is reused (both PCs share it); "Refresh" forces a new one
 
@@ -51,7 +53,10 @@ class DocumentService:
             cached = self._listing
             if refresh or cached is None or cached[1] != n or time.monotonic() - cached[0] > self.LISTING_TTL:
                 pairs = []
+                ours = self.stamper.stamped_fingerprints() if self.stamper is not None else {}
                 for rd in self.source.list_latest(n):
+                    if (rd.file_id, rd.revision) in ours:  # our own barcode stamp, not a re-scan
+                        rd = dataclasses.replace(rd, revision=ours[(rd.file_id, rd.revision)])
                     doc_id = self.repo.upsert_document(source=rd.source, source_file_id=rd.file_id,
                                                        source_revision=rd.revision, name=rd.name,
                                                        mime_type=rd.mime_type, uploaded_at=rd.uploaded_at)
@@ -77,7 +82,9 @@ class DocumentService:
         ext = mimetypes.guess_extension(d["mime_type"]) or Path(d["name"]).suffix or ".bin"
         path = self.cache_dir / f"doc{doc_id}{ext}"
         if not path.exists():
-            data = self.source.download(self.remote_of(doc_id))
+            orig = self.stamper.original_revision_for(doc_id) if self.stamper is not None else None
+            # the AI always reads the original scan, not our stamped copy
+            data = self.source.download_revision(*orig) if orig else self.source.download(self.remote_of(doc_id))
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_bytes(data)
             self.repo.update_document(doc_id, local_path=str(path),

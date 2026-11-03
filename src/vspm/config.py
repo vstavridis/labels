@@ -115,6 +115,8 @@ class Settings(BaseSettings):
     onedrive_workbook_url: str = ""  # production workbook (Σχισμενα.xlsx)
     onedrive_workbook_test_url: str = ""  # a separate COPY used for the end-to-end test
     gdrive_folder_url: str = ""
+    customer_label_same_as_full: bool = True  # one customer value: printed and written to Excel F as entered
+    drive_stamp_barcodes: bool = True  # write each printed barcode onto the scan in Google Drive (Editor role)
     drive_recursive: bool = True  # also search all subfolders (e.g. PG/…, VS/…)
     drive_file_types: str = "jpg"  # comma-separated: jpg, png, pdf, … (empty = PDF and all images)
     drive_latest_count: int = 10  # how many of the newest scans are listed  # Google Drive folder with the scans (overrides VSPM_DRIVE_FOLDER_ID)

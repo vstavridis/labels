@@ -49,6 +49,7 @@ class AppContext:
     problems: dict[str, str] = field(default_factory=dict)
     recovery_notes: list[str] = field(default_factory=list)
     browser: Optional[BrowserPrintService] = None
+    stamper: Any = None  # PhotoStamper (barcodes written onto the scans in Google Drive)
     cloud: Any = None  # CloudServices (OneDrive templates/workbook, Google Drive folder)
 
     def ocr_provider(self):
@@ -84,6 +85,7 @@ def build_context(s: Settings) -> AppContext:
     db = open_database(s.db_path, s.database_url or None)
     repo = Repository(db)
     customers = CustomerService(db, s.resolve(s.customers_config))
+    customers.label_same_as_full = s.customer_label_same_as_full
     if not s.resolve(s.customers_config).exists() and not customers.rules():
         problems["customer_rules"] = (
             "No customer rules yet: every customer gets VS. Enter them in Settings → Customer rules (admin)."
@@ -168,7 +170,7 @@ def build_context(s: Settings) -> AppContext:
                 raise RuntimeError(f"Google Drive folder link: {e}") from e
             source = GoogleDriveSource(folder_id, s.google_auth, s.resolve(s.google_credentials_file),
                                        s.resolve(s.google_token_file), s.google_credentials_json,
-                                       recursive=s.drive_recursive,
+                                       recursive=s.drive_recursive, write=s.drive_stamp_barcodes,
                                        file_types=[t for t in s.drive_file_types.split(",") if t.strip()] or None)
         elif s.drive_mode == DriveMode.local:
             source = LocalFolderSource(s.resolve(s.local_scan_dir))
@@ -184,6 +186,11 @@ def build_context(s: Settings) -> AppContext:
     ctx = AppContext(s, db, repo, customers, templates, transforms, allocator, printer, writer, production, documents,
                      registry_client, problems)
     ctx.cloud = cloud
+    from vspm.services.photo_stamp import PhotoStamper
+    ctx.stamper = PhotoStamper(db, repo, documents, enabled=s.drive_stamp_barcodes)
+    if documents is not None:
+        documents.stamper = ctx.stamper
+    production.photo_stamper = ctx.stamper
     production.cloud_excel = cloud.workbook
     ctx.browser = BrowserPrintService(db, templates, counter_mode=s.dymo_counter_mode)
     production.browser = ctx.browser

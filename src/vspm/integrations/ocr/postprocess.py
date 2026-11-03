@@ -97,9 +97,12 @@ def rows_from_extraction(doc: ExtractedDocument, customers: CustomerService,
         row.template_key = sel.template_key
         row.template_reason = sel.reason
         row.template_needs_confirmation = sel.needs_confirmation
-        row.customer_short = sel.short_name
-        if not sel.short_name_mapped and row.customer_full:
-            row.flags.setdefault("customer_short", "info:unmapped")
+        if getattr(customers, "label_same_as_full", False):
+            row.customer_short = row.customer_full  # one customer value (VSPM_CUSTOMER_LABEL_SAME_AS_FULL)
+        else:
+            row.customer_short = sel.short_name
+            if not sel.short_name_mapped and row.customer_full:
+                row.flags.setdefault("customer_short", "info:unmapped")
         if any(v == "uncertain" for v in row.flags.values()) or sel.needs_confirmation:
             row.status = RowStatus.needs_review
         out.append(row)
