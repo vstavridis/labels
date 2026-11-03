@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import threading
+import time
+
 import json
 import mimetypes
 from dataclasses import dataclass
@@ -36,18 +39,32 @@ class DocumentService:
         self.source = source
         self.customers = customers
         self.cache_dir = Path(cache_dir)
+        self._listing = None
+        self._listing_lock = threading.Lock()
 
-    def latest(self, n: int = 5) -> list[ListedDocument]:
+    LISTING_TTL = 60.0  # seconds a Drive listing is reused (both PCs share it); "Refresh" forces a new one
+
+    def latest(self, n: int = 5, refresh: bool = False) -> list[ListedDocument]:
+        """The n newest scans. The remote listing is reused for LISTING_TTL seconds: every click in
+        Streamlit reruns the page, and listing a folder tree on Google Drive takes several requests."""
+        with self._listing_lock:
+            cached = self._listing
+            if refresh or cached is None or cached[1] != n or time.monotonic() - cached[0] > self.LISTING_TTL:
+                pairs = []
+                for rd in self.source.list_latest(n):
+                    doc_id = self.repo.upsert_document(source=rd.source, source_file_id=rd.file_id,
+                                                       source_revision=rd.revision, name=rd.name,
+                                                       mime_type=rd.mime_type, uploaded_at=rd.uploaded_at)
+                    pairs.append((doc_id, rd))
+                self._listing = cached = (time.monotonic(), n, pairs)
+        pairs = cached[2]
+        info = self.repo.document_summaries([d for d, _ in pairs])
         out = []
-        for rd in self.source.list_latest(n):
-            doc_id = self.repo.upsert_document(source=rd.source, source_file_id=rd.file_id,
-                                               source_revision=rd.revision, name=rd.name, mime_type=rd.mime_type,
-                                               uploaded_at=rd.uploaded_at)
-            doc = self.repo.get_document(doc_id)
-            rows = self.repo.rows_for_document(doc_id)
-            changed = any(o["status"] != "new" for o in self.repo.other_revisions(rd.source, rd.file_id, doc_id))
-            out.append(ListedDocument(doc_id, rd, doc["status"], len(rows),
-                                      sum(1 for r in rows if r.label_id is not None), changed))
+        for doc_id, rd in pairs:
+            i = info.get(doc_id)
+            if i is None:
+                continue
+            out.append(ListedDocument(doc_id, rd, i["doc"]["status"], i["rows"], i["printed"], i["changed"]))
         return out
 
     def remote_of(self, doc_id: int) -> RemoteDocument:

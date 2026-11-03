@@ -62,8 +62,15 @@ class Repository:
                              (limit,))
 
     # ---- production rows ------------------------------------------------------
+    ROW_SELECT = ("SELECT r.*, l.id AS joined_label_id FROM production_rows r "
+                  "LEFT JOIN labels l ON l.production_row_id = r.id")
+
     def _row_from_db(self, r: sqlite3.Row) -> ProductionRow:
-        label = self.db.one("SELECT id FROM labels WHERE production_row_id=?", (r["id"],))
+        if "joined_label_id" in r.keys():  # loaded with ROW_SELECT: no extra query per row
+            label_id = r["joined_label_id"]
+        else:
+            label = self.db.one("SELECT id FROM labels WHERE production_row_id=?", (r["id"],))
+            label_id = label["id"] if label else None
         return ProductionRow(
             id=r["id"], document_id=r["document_id"], row_index=r["row_index"],
             **{c: r[c] for c in ROW_COLUMNS},
@@ -74,7 +81,7 @@ class Repository:
             flags=json.loads(r["flags_json"] or "{}"),
             ocr_original=json.loads(r["ocr_original_json"] or "{}"),
             approved=bool(r["approved"]), status=RowStatus(r["status"]),
-            label_id=label["id"] if label else None,
+            label_id=label_id,
         )
 
     def add_row(self, row: ProductionRow, conn: sqlite3.Connection | None = None) -> int:
@@ -135,7 +142,33 @@ class Repository:
 
     def rows_for_document(self, doc_id: int) -> list[ProductionRow]:
         return [self._row_from_db(r) for r in self.db.query(
-            "SELECT * FROM production_rows WHERE document_id=? AND deleted=0 ORDER BY row_index, id", (doc_id,))]
+            self.ROW_SELECT + " WHERE r.document_id=? AND r.deleted=0 ORDER BY r.row_index, r.id", (doc_id,))]
+
+    def document_summaries(self, doc_ids: list[int]) -> dict[int, dict]:
+        """Status, row count, printed rows and 'another revision was processed' for several documents
+        in three queries (the scan list is shown on every page load)."""
+        if not doc_ids:
+            return {}
+        marks = ",".join("?" * len(doc_ids))
+        docs = {d["id"]: d for d in self.db.query(f"SELECT * FROM documents WHERE id IN ({marks})", tuple(doc_ids))}
+        counts = {r[0]: (r[1], r[2]) for r in self.db.query(
+            "SELECT r.document_id, COUNT(*), SUM(CASE WHEN l.id IS NULL THEN 0 ELSE 1 END) FROM production_rows r "
+            f"LEFT JOIN labels l ON l.production_row_id = r.id WHERE r.deleted=0 AND r.document_id IN ({marks}) "
+            "GROUP BY r.document_id", tuple(doc_ids))}
+        keys = {(d["source"], d["source_file_id"]) for d in docs.values()}
+        processed: dict[tuple, set[int]] = {}
+        if keys:
+            file_ids = tuple(sorted({k[1] for k in keys}))
+            fm = ",".join("?" * len(file_ids))
+            for o in self.db.query(f"SELECT id, source, source_file_id, status FROM documents WHERE source_file_id IN "
+                                   f"({fm}) AND status <> 'new'", file_ids):
+                processed.setdefault((o["source"], o["source_file_id"]), set()).add(o["id"])
+        out = {}
+        for i, d in docs.items():
+            n, printed = counts.get(i, (0, 0))
+            others = processed.get((d["source"], d["source_file_id"]), set()) - {i}
+            out[i] = {"doc": d, "rows": int(n or 0), "printed": int(printed or 0), "changed": bool(others)}
+        return out
 
     def replace_rows_for_document(self, doc_id: int, rows: list[ProductionRow]) -> list[int]:
         """Replace the unprinted rows after re-running OCR.

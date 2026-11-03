@@ -21,6 +21,11 @@ def doc_selector(ctx) -> int | None:
     return choice
 
 
+def _nullcontext():
+    import contextlib
+    return contextlib.nullcontext()
+
+
 def render() -> None:
     ctx = get_context()
     show_flash()
@@ -28,8 +33,10 @@ def render() -> None:
     if ctx.documents is None:
         st.error(ctx.problems.get("documents", "Document source not configured"))
         return
+    refresh = st.button("🔄 " + T("cs_refresh_scans"), key="refresh_scans")
     try:
-        ctx.documents.latest(ctx.settings.drive_latest_count)
+        with st.spinner(T("cs_refresh_scans") + "…") if refresh else _nullcontext():
+            ctx.documents.latest(ctx.settings.drive_latest_count, refresh=refresh)
     except Exception as e:
         st.warning(str(e))
     doc_id = doc_selector(ctx)
