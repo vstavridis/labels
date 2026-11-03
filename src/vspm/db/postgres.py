@@ -214,7 +214,8 @@ def _pool(url: str, min_size: int, max_size: int):
 
     if url not in _POOLS:
         _POOLS[url] = ConnectionPool(url, min_size=min_size, max_size=max_size, open=True,
-                                     kwargs={"autocommit": True, "row_factory": _row_factory},
+                                     kwargs={"autocommit": True, "row_factory": _row_factory,
+                                             "prepare_threshold": None},  # safe behind PgBouncer poolers
                                      check=ConnectionPool.check_connection, name="vspm")
     return _POOLS[url]
 
@@ -258,24 +259,27 @@ class PostgresDatabase(DatabaseBase):
                 yield Connection(raw, self._id_tables)
 
     def migrate(self) -> list[str]:
+        """All pending migrations in ONE transaction under a transaction-scoped lock.
+
+        Transaction-scoped (pg_advisory_xact_lock) because Neon's -pooler endpoint (PgBouncer,
+        transaction mode) may run each transaction on a different server connection: a session lock
+        could be taken on one and never released. DDL is transactional in PostgreSQL: a failed
+        migration leaves nothing half-applied."""
         applied: list[str] = []
         with self.pool.connection() as raw:
-            raw.execute("SELECT pg_advisory_lock(%s)", (MIGRATION_LOCK,))
-            try:
+            with raw.transaction():
+                raw.execute("SELECT pg_advisory_xact_lock(%s)", (MIGRATION_LOCK,))
                 raw.execute("CREATE TABLE IF NOT EXISTS schema_migrations "
                             "(version TEXT PRIMARY KEY, applied_at TEXT NOT NULL)")
                 done = {r[0] for r in raw.execute("SELECT version FROM schema_migrations").fetchall()}
                 for f in sorted(MIGRATIONS_DIR.glob("*.sql")):
                     if f.stem in done:
                         continue
-                    with raw.transaction():
-                        for stmt in _split_sql(f.read_text(encoding="utf-8")):
-                            raw.execute(translate_ddl(stmt))
-                        raw.execute("INSERT INTO schema_migrations VALUES (%s, %s)", (f.stem, utcnow()))
+                    for stmt in _split_sql(f.read_text(encoding="utf-8")):
+                        raw.execute(translate_ddl(stmt))
+                    raw.execute("INSERT INTO schema_migrations VALUES (%s, %s)", (f.stem, utcnow()))
                     applied.append(f.stem)
-                self._load_id_tables(raw)
-            finally:
-                raw.execute("SELECT pg_advisory_unlock(%s)", (MIGRATION_LOCK,))
+            self._load_id_tables(raw)
         return applied
 
     def execute(self, sql: str, params: tuple | dict = ()) -> Any:
