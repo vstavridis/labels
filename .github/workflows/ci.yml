@@ -77,7 +77,8 @@ jobs:
             test -f "$f" || { echo "missing: $f"; exit 1; }
           done
       - run: pip install -r requirements.txt playwright
-      - run: python -m playwright install --with-deps chromium
+      - name: Chromium for the deployment check (retried, the download host is sometimes slow)
+        run: for i in 1 2 3; do timeout 300 python -m playwright install --with-deps chromium && break; echo "download attempt $i failed, retrying"; sleep 20; [ "$i" = 3 ] && exit 1; done
       - run: python scripts/check_cloud_deploy.py --database-url postgresql://postgres:postgres@localhost:5432/vspm_deploy
 
   browser-dymo:
@@ -103,7 +104,7 @@ jobs:
       - run: pip install -e ".[dev]" playwright
       - name: Bundled Chromium (Linux only; Windows uses the installed Chrome / Edge)
         if: matrix.channel == ''
-        run: python -m playwright install --with-deps chromium
+        run: for i in 1 2 3; do timeout 300 python -m playwright install --with-deps chromium && break; echo "download attempt $i failed, retrying"; sleep 20; [ "$i" = 3 ] && exit 1; done
       - name: Browser versions
         shell: bash
         run: |
