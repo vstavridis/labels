@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import base64
+import difflib
 import io
 import json
 import logging
@@ -72,10 +73,28 @@ class CloudConfig:
         v = self.db.get_setting(f"cloud.{key}")
         return v if v is not None else str(getattr(self.s, key, "") or "")
 
+    def default(self, key: str) -> str:
+        return str(getattr(self.s, key, "") or "").strip()
+
+    def source(self, key: str) -> str:
+        """'app' when changed in Settings (overrides the secrets), else 'secrets'."""
+        return "app" if self.db.get_setting(f"cloud.{key}") is not None else "secrets"
+
     def set(self, key: str, value: str, user: str) -> None:
+        """Store a value changed in the app. The same value as in the secrets removes the override, so a
+        later correction in the secrets is not silently hidden by an old copy stored here."""
         assert key in CONFIG_KEYS
-        self.db.set_setting(f"cloud.{key}", value.strip())
-        self.db.audit("cloud_config", key, "changed", {"value": value.strip()[:200]}, user)
+        value = value.strip()
+        if value == self.default(key):
+            self.db.execute("DELETE FROM app_settings WHERE key=?", (f"cloud.{key}",))
+        else:
+            self.db.set_setting(f"cloud.{key}", value)
+        self.db.audit("cloud_config", key, "changed", {"value": value[:200]}, user)
+
+    def reset(self, key: str, user: str) -> None:
+        """Back to the value in the Streamlit secrets."""
+        self.db.execute("DELETE FROM app_settings WHERE key=?", (f"cloud.{key}",))
+        self.db.audit("cloud_config", key, "reset_to_secrets", {}, user)
 
     def get_json(self, key: str) -> dict:
         v = self.db.get_setting(f"cloud.{key}")
@@ -224,8 +243,14 @@ class TemplateSync:
         undecided = [k for k in TemplateKey if k.value not in names]
         for k, name in names.items():
             f = by_name.get(nfc(name))
-            out[k] = (f, "" if f else f"'{name}' not found in the OneDrive folder (found: "
-                                      f"{', '.join(sorted(by_name)) or 'no .label files'})")
+            if f is None:
+                close = difflib.get_close_matches(nfc(name), list(by_name), n=3, cutoff=0.6)
+                hint = f" Did you mean: {', '.join(close)}?" if close else ""
+                err = (f"'{name}' not found in the OneDrive folder.{hint} Correct the name in Settings → Cloud "
+                       f"sources → File names. (found: {', '.join(sorted(by_name)) or 'no .label files'})")
+            else:
+                err = ""
+            out[k] = (f, err)
         if undecided:
             mapped = {id(v[0]) for v in out.values() if v[0] is not None}
             prefixes: dict[str, list[DriveItem]] = {}

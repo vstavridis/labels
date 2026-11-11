@@ -396,3 +396,24 @@ def test_google_drive_folder_from_settings_is_used(settings):
     finally:
         cmod.GoogleDriveSource = orig
     assert seen["folder"] == fid
+
+
+def test_wrong_name_suggests_the_close_match(settings, ms):
+    ctx = cloud_ctx(settings, ms)
+    connect(ctx, ms)
+    ctx.cloud.config.set("onedrive_template_files",
+                         ";".join(f"{k}={v}" for k, v in NAMES.items()).replace("PG-1.label", "PG-1(1).label"),
+                         "admin")
+    out = {s.key: s for s in ctx.cloud.templates.refresh("admin")}
+    assert out["PG"].status == "error" and f"Did you mean: {NAMES['PG']}" in out["PG"].error
+
+
+def test_value_equal_to_secrets_is_not_stored_and_reset_works(settings, ms):
+    ctx = cloud_ctx(settings, ms)
+    cfg = ctx.cloud.config
+    cfg.set("onedrive_templates_url", FOLDER_LINK, "admin")  # same as the secrets
+    assert cfg.source("onedrive_templates_url") == "secrets"
+    cfg.set("onedrive_templates_url", "Documents/Labels", "admin")
+    assert cfg.source("onedrive_templates_url") == "app" and cfg.get("onedrive_templates_url") == "Documents/Labels"
+    cfg.reset("onedrive_templates_url", "admin")
+    assert cfg.get("onedrive_templates_url") == FOLDER_LINK

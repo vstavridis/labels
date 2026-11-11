@@ -55,8 +55,11 @@ def render(ctx) -> None:
     with st.form("cloud_links"):
         values = {}
         for key, label in FIELDS:
+            src = cloud.config.source(key)
             values[key] = st.text_input(T(label), value=cloud.config.get(key), disabled=not admin,
-                                        type="default")
+                                        help=T("cs_from_app") if src == "app" else T("cs_from_secrets"))
+            if src == "app":
+                st.caption("✏️ " + T("cs_from_app"))
         if st.form_submit_button(T("save"), type="primary", disabled=not admin):
             try:
                 parse_drive_folder_id(values["gdrive_folder_url"])
@@ -68,6 +71,13 @@ def render(ctx) -> None:
             except ValueError as e:
                 flash("error", str(e))
             st.rerun()
+
+    overridden = [k for k, _ in FIELDS if cloud.config.source(k) == "app"]
+    if admin and overridden and st.button(T("cs_reset_to_secrets", n=len(overridden))):
+        for k in overridden:
+            cloud.config.reset(k, operator())
+        reload_context()
+        st.rerun()
 
     # ---- Microsoft account ------------------------------------------------------------------
     st.subheader("Microsoft OneDrive")
