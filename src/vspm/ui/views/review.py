@@ -51,6 +51,47 @@ def to_frame(ctx, rows: list[ProductionRow]) -> pd.DataFrame:
     return pd.DataFrame(data, columns=cols)
 
 
+# Columns with a "⬇ Fill" button: the value of the first row is copied into the EMPTY cells of the
+# other rows (values already there are kept; printed rows are never changed).
+FILL_COLUMNS = ["customer_full", "material", "thickness", "dimensions", "weight", "pieces", "packages",
+                "source_roll", "location", "document_date", "template"]
+
+
+def fill_down(df: pd.DataFrame, col: str) -> tuple[pd.DataFrame, int]:
+    """Copy the first row's value of `col` into the empty cells of the other unprinted rows.
+    For the label type (never empty) every other unprinted row gets the first row's type.
+    Returns (new frame, number of cells filled)."""
+    out = df.copy()
+    rows = [i for i in out.index if not (isinstance(out.at[i, "#"], float) and math.isnan(out.at[i, "#"]))]
+    if not rows:
+        return out, 0
+    first = min(rows, key=lambda i: out.at[i, "#"])
+    value = _s(out.at[first, col])
+    if not value:
+        return out, 0
+    n = 0
+    for i in rows:
+        if i == first or _s(out.at[i, "barcode"]):  # printed rows keep their values
+            continue
+        current = _s(out.at[i, col])
+        if (col == "template" and current != value) or (col != "template" and not current):
+            out.at[i, col] = value
+            n += 1
+    return out, n
+
+
+def fill_candidates(df: pd.DataFrame) -> dict[str, str]:
+    """{column: first-row value} for the columns where Fill would change something."""
+    out = {}
+    for col in FILL_COLUMNS:
+        if col in df.columns:
+            _, n = fill_down(df, col)
+            if n:
+                rows = df.dropna(subset=["#"])
+                out[col] = _s(rows.sort_values("#").iloc[0][col])
+    return out
+
+
 def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame, confirmed: bool) -> list[str]:
     msgs: list[str] = []
     orig_ids = {int(i) for i in original["id"].dropna()}
@@ -168,20 +209,48 @@ def render() -> None:
         if same:  # one customer value: printed on the label and written to Excel F as entered
             colcfg["customer_full"] = st.column_config.TextColumn("Customer" if en else "ΠΕΛΑΤΗΣ")
             colcfg["customer_short"] = None
+        ver = st.session_state.get("editor_ver", 0)
         edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
-                                width="stretch", key=f"editor_{doc_id}_{len(rows)}")
+                                width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
+        fills = fill_candidates(edited)
+        if fills:
+            st.caption(T("fill_help"))
+            names = {f: (eng if en else el) for f, el, eng in FIELDS}
+            names["template"] = T("template")
+            if same:
+                names["customer_full"] = "Customer" if en else "ΠΕΛΑΤΗΣ"
+            cols = st.columns(min(4, len(fills)))
+            for i, (col, value) in enumerate(fills.items()):
+                short = value if len(value) <= 18 else value[:17] + "…"
+                if cols[i % len(cols)].button(f"⬇ {names[col]}: {short}", key=f"fill_{col}", width="stretch",
+                                              help=T("fill_one_help", c=names[col], v=value)):
+                    filled, n = fill_down(edited, col)
+                    msgs = apply_changes(ctx, doc_id, original, filled, st.session_state.get("confirm_flags", False))
+                    if col == "template":  # choosing the type for all rows is the operator's confirmation
+                        for r in ctx.repo.rows_for_document(doc_id):
+                            if r.label_id is None and r.template_key and r.template_key.value == value \
+                                    and r.template_needs_confirmation:
+                                r.template_needs_confirmation = False
+                                r.flags.pop("template_key", None)
+                                ctx.repo.save_row(r)
+                    for m in msgs:
+                        flash("warning", m)
+                    flash("success", T("filled", n=n, c=names[col]))
+                    st.session_state["editor_ver"] = ver + 1
+                    st.rerun()
         for r in rows:
             reasons = [f"#{r.row_index}: {r.template_reason}"] if r.template_reason else []
             notes = [f"{k[5:]}: {v}" for k, v in r.flags.items() if k.startswith("note:")]
             if reasons or notes:
                 st.caption(" · ".join(reasons + notes))
-        confirmed = st.checkbox(T("confirm_flags"))
+        confirmed = st.checkbox(T("confirm_flags"), key="confirm_flags")
         c1, c2 = st.columns(2)
         if c1.button("💾 " + T("save"), type="primary", width="stretch"):
             msgs = apply_changes(ctx, doc_id, original, edited, confirmed)
             for m in msgs:
                 flash("warning", m)
             flash("success", T("saved"))
+            st.session_state["editor_ver"] = st.session_state.get("editor_ver", 0) + 1
             st.rerun()
         if c2.button("🖨️ " + T("nav_print"), width="stretch"):
             st.switch_page(st.session_state["_pages"]["print"])

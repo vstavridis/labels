@@ -8,7 +8,7 @@ import httpx
 import pytest
 from lxml import etree
 
-from tests.browser.conftest import goto_app, new_page
+from tests.browser.conftest import goto_app, new_page, wait_idle
 from tests.browser.test_dymo_bridge_browser import BRIDGE, jobs, open_printer_page, wait_printer_selected, wait_station_verified
 
 
@@ -158,8 +158,18 @@ def test_download_fallback_contains_reserved_barcode(browser, app_server, dymo_r
     open_print_page(page, app_server)
     page.get_by_text(re.compile("Λήψη αρχείου .label")).click()
     page.get_by_role("button", name="Δέσμευση barcode για χειροκίνητη εκτύπωση").click()
-    with page.expect_download() as dl:
-        page.get_by_role("button", name=re.compile(r"Λήψη .*\.label")).click()
+    # Streamlit 1.67 ignores a click on a download button that is still being redrawn after the
+    # "reserve" rerun: wait until the page is idle, and click again if nothing came (as a person would).
+    dl = None
+    for attempt in range(3):
+        wait_idle(page)
+        try:
+            with page.expect_download(timeout=15000) as dl:
+                page.get_by_role("button", name=re.compile(r"Λήψη .*\.label")).click()
+            break
+        except Exception:
+            if attempt == 2:
+                raise
     path = dl.value.path()
     xml = open(path, encoding="utf-8").read()
     barcode = app_ctx.repo.label_for_row(rid)["barcode"]

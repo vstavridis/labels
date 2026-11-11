@@ -76,7 +76,7 @@ def main() -> int:
     opened = start(8612, a.database_url, "false", logs / "login_off.log")
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch()
+            browser = p.chromium.launch(channel=os.environ.get("VSPM_TEST_BROWSER_CHANNEL") or None)
             page = browser.new_page()
             page.set_default_timeout(60000)
 

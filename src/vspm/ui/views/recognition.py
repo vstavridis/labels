@@ -49,7 +49,8 @@ def render() -> None:
         doc = ctx.repo.get_document(doc_id)
         rows = ctx.repo.rows_for_document(doc_id)
         s = ctx.settings
-        st.markdown(f"**AI:** {s.ocr_provider.value} · {s.ocr_model}")
+        model = s.ocr_openai_model if s.ocr_provider.value == "openai" else s.ocr_model
+        st.markdown(f"**AI:** {s.ocr_provider.value} · {model}")
         if s.ocr_provider.value in ("anthropic", "openai") and not s.ocr_upload_consent:
             st.warning("Η αποστολή εγγράφων στην υπηρεσία AI δεν είναι ενεργή (VSPM_OCR_UPLOAD_CONSENT)."
                        if st.session_state["lang"] == "el" else

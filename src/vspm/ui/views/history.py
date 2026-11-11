@@ -85,7 +85,10 @@ def render() -> None:
     st.caption(f"{len(pending)} · mode: {ctx.settings.excel_mode.value} · "
                f"workbook: {ctx.writer.path} · writes {'enabled' if ctx.settings.excel_write_enabled else 'disabled'}")
     cloud = bool(ctx.settings.database_url)
-    if cloud:
+    if cloud and ctx.settings.excel_mode.value == "onedrive" and getattr(ctx, "cloud", None) is not None:
+        on = ctx.cloud.workbook.production_enabled()
+        st.info(T("excel_onedrive_on") if on else T("excel_onedrive_off"))
+    elif cloud:
         st.info(T("excel_cloud_note"))
     else:
         for p in ctx.writer.preflight():

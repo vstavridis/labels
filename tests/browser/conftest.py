@@ -134,6 +134,16 @@ def goto_app(page, url: str) -> None:
         page.locator("h1").first.wait_for()
 
 
+def wait_idle(page, timeout: int = 30000) -> None:
+    """Wait until Streamlit has finished running the script (its 'Running…' indicator is gone)."""
+    page.wait_for_timeout(300)
+    try:
+        page.locator('[data-testid="stStatusWidget"]').wait_for(state="hidden", timeout=timeout)
+    except Exception:
+        pass
+    page.wait_for_timeout(300)
+
+
 _OPEN_CONTEXTS: list = []
 _SERVER_LOG: list = []
 
