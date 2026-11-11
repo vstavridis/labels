@@ -86,6 +86,10 @@ class Settings(BaseSettings):
     anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
     openai_api_key: str = Field(default="", validation_alias="OPENAI_API_KEY")
     ocr_openai_model: str = "gpt-5"  # OpenAI vision model with structured outputs (VSPM_OCR_OPENAI_MODEL)
+    # Speed of "Read with AI" on OpenAI: less thinking and a smaller picture answer in seconds instead of
+    # a minute or more; uncertain values are still marked ⚠ for the operator (VSPM_OCR_OPENAI_EFFORT).
+    ocr_openai_effort: str = "low"
+    ocr_image_max_side: int = 1600  # longest side in pixels of the picture sent to the AI
 
     printer_mode: PrinterMode = PrinterMode.mock
     printer_name: str = "DYMO LabelWriter Wireless"
@@ -176,7 +180,7 @@ class Settings(BaseSettings):
             raise ValueError("excel_material_source must be 'canonical' or 'label'")
         return v
 
-    @field_validator("ocr_effort")
+    @field_validator("ocr_effort", "ocr_openai_effort")
     @classmethod
     def _effort(cls, v: str) -> str:
         if v not in {"low", "medium", "high", "xhigh", "max"}:

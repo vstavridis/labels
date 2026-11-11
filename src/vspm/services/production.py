@@ -184,6 +184,22 @@ class ProductionService:
                 errors["template_key"] = str(e)
         return errors
 
+    def approve_row(self, row_id: int, operator: Optional[str] = None) -> dict[str, str]:
+        """The operator checked the label: confirm its uncertain values/template and approve it.
+        Returns the errors that still block printing (empty when the row can be printed)."""
+        row = self.repo.get_row(row_id)
+        if row is None or self.repo.label_for_row(row_id) is not None:
+            return {"row": "already printed or deleted"}
+        row.flags = {k: v for k, v in row.flags.items() if v != "uncertain"}
+        row.template_needs_confirmation = False
+        errors = validate_row(self._effective(row))
+        row.approved = not errors
+        if row.approved:
+            row.status = RowStatus.approved
+        self.repo.save_row(row)
+        self.db.audit("row", row_id, "approved_on_print_page", {"errors": errors}, operator)
+        return self.check_printable(row)
+
     def preview(self, row: ProductionRow, barcode: Optional[str] = None) -> tuple[bytes, str, LabelContent]:
         """PNG preview for a row (proposed or existing barcode)."""
         if row.template_key is None:

@@ -60,8 +60,8 @@ class AppContext:
             return MockOcr()
         if s.ocr_provider == OcrMode.openai:
             from vspm.integrations.ocr.openai_provider import OpenAIOcr
-            return OpenAIOcr(api_key=s.openai_api_key, model=s.ocr_openai_model, effort=s.ocr_effort,
-                             upload_consent=s.ocr_upload_consent)
+            return OpenAIOcr(api_key=s.openai_api_key, model=s.ocr_openai_model, effort=s.ocr_openai_effort,
+                             upload_consent=s.ocr_upload_consent, max_side=s.ocr_image_max_side)
         return AnthropicOcr(api_key=s.anthropic_api_key, model=s.ocr_model, effort=s.ocr_effort,
                             upload_consent=s.ocr_upload_consent, server_fallbacks=s.ocr_server_fallbacks)
 

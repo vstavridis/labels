@@ -12,6 +12,11 @@ PIECES_RE = re.compile(r"^\d+(\s*\+\s*\d+)*$")
 CODE39_RE = re.compile(r"^[0-9A-Z\-. $/+%]+$")
 
 
+# Read from the sheet for reference only: not printed on the label and not written to Excel,
+# so an uncertain reading there never blocks printing.
+NON_BLOCKING_FLAGS = {"source_barcode", "packages", "document_date"}
+
+
 def required_fields(template: TemplateKey | None) -> list[str]:
     base = ["material", "thickness", "dimensions", "pieces", "weight"]
     # Every template except PG0 shows ΠΕΛΑΤΗΣ on the label; Excel always needs it.
@@ -37,6 +42,6 @@ def validate_row(row: ProductionRow) -> dict[str, str]:
     if row.template_needs_confirmation:
         errors["template_key"] = "label type must be confirmed by the operator"
     for f, flag in row.flags.items():
-        if flag == "uncertain" and f not in errors:
+        if flag == "uncertain" and f not in errors and f not in NON_BLOCKING_FLAGS:
             errors[f] = "uncertain OCR value - confirm or correct"
     return errors

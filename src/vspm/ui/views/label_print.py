@@ -7,6 +7,7 @@ import streamlit as st
 from vspm.domain.models import LabelContent
 from vspm.services.production import AlreadyPrinted, PossibleDuplicate, ProductionError, ValidationFailed
 from vspm.ui.common import S, T, badge, flash, get_context, operator, show_flash, status_kind
+from vspm.ui.views.approve import _approve, approvable
 from vspm.ui.views.recognition import doc_selector
 
 
@@ -78,6 +79,9 @@ def render() -> None:
             errors = ctx.production.check_printable(row)
             if errors:
                 st.warning(T("not_printable") + "\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in errors.items()))
+                if approvable(errors):
+                    st.button(T("approve_here"), type="primary", width="stretch", key=f"approve_{row_id}",
+                              on_click=_approve, args=(ctx, row_id))
             dup = st.session_state.get("possible_duplicate")
             allow_dup = False
             if dup and dup.get("row_id") == row_id:

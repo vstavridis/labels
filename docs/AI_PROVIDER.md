@@ -42,6 +42,9 @@ ANTHROPIC_API_KEY=sk-ant-...
   (beta `server-side-fallback-2026-07-01`). Set it to `false` to disable.
 * Cost: one request per document read; a one-page scan is typically a few cents at the configured model's
   rates. Lower `VSPM_OCR_EFFORT` to reduce cost once accuracy on your documents is known.
+* OpenAI speed: `VSPM_OCR_OPENAI_EFFORT` (default `low`) and `VSPM_OCR_IMAGE_MAX_SIDE` (default `1600`
+  pixels). Low effort and a smaller picture usually answer in seconds; raise them (`medium`/`high`, `2400`)
+  only if readings of your scans become less accurate.
 
 ## Data handling (read before enabling)
 

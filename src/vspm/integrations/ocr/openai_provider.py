@@ -48,8 +48,8 @@ def strict_schema() -> dict:
 class OpenAIOcr:
     name = "openai"
 
-    def __init__(self, api_key: str, model: str = "gpt-5", effort: str = "high", upload_consent: bool = False,
-                 client=None):
+    def __init__(self, api_key: str, model: str = "gpt-5", effort: str = "low", upload_consent: bool = False,
+                 client=None, max_side: int = 1600):
         if not upload_consent:
             raise OcrNotAllowedError(
                 "Sending documents to the AI provider is not enabled. Set VSPM_OCR_UPLOAD_CONSENT=true after "
@@ -64,14 +64,15 @@ class OpenAIOcr:
         self.client = client or openai.OpenAI(api_key=api_key, timeout=300, max_retries=2)
         self.model = model
         self.effort = effort
+        self.max_side = max_side
 
     def _content(self, doc: OcrInput) -> list[dict]:
         parts: list[dict] = []
-        pages = page_images(doc.data, doc.mime_type)  # PDFs are rendered page by page
+        pages = page_images(doc.data, doc.mime_type, max_side=self.max_side)  # PDFs are rendered page by page
         for i, img in enumerate(pages, 1):
             if len(pages) > 1:
                 parts.append({"type": "text", "text": f"Page {i} of {len(pages)}:"})
-            b64 = base64.standard_b64encode(to_jpeg(img)).decode("ascii")
+            b64 = base64.standard_b64encode(to_jpeg(img, quality=85)).decode("ascii")
             parts.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}",
                                                              "detail": "high"}})
         parts.append({"type": "text", "text": USER_PROMPT})
@@ -85,10 +86,10 @@ class OpenAIOcr:
                       {"role": "user", "content": self._content(doc)}],
             response_format={"type": "json_schema", "json_schema": {
                 "name": "extracted_document", "strict": True, "schema": strict_schema()}},
-            max_completion_tokens=32000,
+            max_completion_tokens=16000,
         )
         if self.model.startswith(("gpt-5", "o1", "o3", "o4")):  # reasoning models
-            kwargs["reasoning_effort"] = REASONING_EFFORT.get(self.effort, "high")
+            kwargs["reasoning_effort"] = REASONING_EFFORT.get(self.effort, "low")
         try:
             resp = self.client.chat.completions.create(**kwargs)
         except o.AuthenticationError as e:
