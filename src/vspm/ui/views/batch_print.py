@@ -9,6 +9,8 @@ any other result stops the series so the operator can check the printer.
 
 from __future__ import annotations
 
+from typing import Optional
+
 import streamlit as st
 
 from vspm.services.browser_print import JobInProgress
@@ -84,12 +86,18 @@ def auto_series(ctx) -> None:
 
 def start(ctx, doc_id: int) -> None:
     """on_click of «Print DYMO / Excel»."""
-    auto_series(ctx)  # labels printed by hand with DYMO meanwhile are never issued again
+    import time
+    if time.time() - st.session_state.get("series_sync_at", 0) > 30:
+        st.session_state["series_sync_at"] = time.time()
+        auto_series(ctx)  # labels printed by hand with DYMO meanwhile are never issued again
     ids = _confirm_rows(ctx, rows_to_print(ctx, doc_id))
     if ctx.settings.printer_mode.value != "browser":
-        ok = 0
+        ok, done = 0, []
         for rid in ids:  # server-side printer: one after the other within this click
             try:
+                label = ctx.production.prepare_label(rid, operator())
+                ctx.production.defer([label["id"]])
+                done.append(label["id"])
                 out = ctx.production.print_and_save(rid, operator=operator())
                 ok += int(out.print_ok)
                 if not out.print_ok:
@@ -100,18 +108,21 @@ def start(ctx, doc_id: int) -> None:
                 _skip(ctx, rid, e)
             except (ValidationFailed, AlreadyPrinted, ProductionError) as e:
                 _skip(ctx, rid, e)
+        for m in ctx.production.finish_series(done, operator()):
+            flash("info", m)
         flash("success" if ok == len(ids) else "warning", T("batch_done", ok=ok, n=len(ids)))
         return
     st.session_state.pop("batch_result", None)
-    st.session_state["batch"] = {"doc": doc_id, "queue": ids, "n": len(ids), "ok": 0, "current": None}
-    _advance(ctx)
+    st.session_state["batch"] = {"doc": doc_id, "rows": ids, "n": len(ids), "jobs": [], "labels": [], "ok": 0}
+    _prepare(ctx, limit=1)  # the first label goes to the printer at once; the others follow in the next run
 
 
-def _advance(ctx) -> bool:
-    """Start the next label of the series. False when the series is over."""
+def _prepare(ctx, limit: Optional[int] = None) -> None:
+    """Reserve the barcodes and create the print jobs of the next rows of the series."""
     b = st.session_state.get("batch")
-    while b and b["queue"]:
-        rid = b["queue"].pop(0)
+    n = 0
+    while b and b["rows"] and (limit is None or n < limit):
+        rid = b["rows"].pop(0)
         try:
             job = ctx.production.start_browser_print(
                 rid, session_id=session_id(), station_id=st.session_state.get("station_id"),
@@ -126,63 +137,78 @@ def _advance(ctx) -> bool:
             continue
         except StationNotVerified as e:
             flash("error", str(e))
+            b["rows"] = []
             break
         except (ValidationFailed, JobInProgress, AlreadyPrinted, ProductionError) as e:
             _skip(ctx, rid, e)
             continue
-        st.session_state["print_job"] = job.for_browser()
-        st.session_state["print_job_key"] = job.job_key
-        st.session_state["row_id"] = rid  # the page shows the label being printed
-        b["current"] = rid
-        return True
-    if b:  # kept on the page (a flash message could be cleared by the bridge's next report)
-        st.session_state["batch_result"] = {"doc": b["doc"], "ok": b["ok"], "n": b["n"]}
+        ctx.production.defer([job.label_id])
+        b["jobs"].append(job.for_browser())
+        b["labels"].append(job.label_id)
+        n += 1
+
+
+def batch_jobs(ctx) -> list[dict]:
+    """The labels of the series still to be sent by this browser (handed over all at once)."""
+    b = st.session_state.get("batch")
+    if not b or not b["jobs"]:
+        return []
+    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
+    return [j for j in b["jobs"] if rows.get(j["job_key"], {}).get("status") in ("pending", "not_submitted")]
+
+
+def _finish(ctx, b: dict, ok: int) -> None:
+    for m in ctx.production.finish_series(b["labels"], operator()):
+        flash("info", m)
+    st.session_state["batch_result"] = {"doc": b["doc"], "ok": ok, "n": b["n"]}
     st.session_state.pop("batch", None)
-    return False
 
 
 def step(ctx) -> None:
-    """After the browser's report was recorded: go on with the next label (or stop on a problem)."""
+    """After the browser's report was recorded: hand over the rest of the series, or close it."""
     b = st.session_state.get("batch")
     if not b:
         return
-    if b.get("current") is not None:
-        key = st.session_state.get("print_job_key")
-        job = ctx.browser.job(key) if key else None
-        if job is None or job["status"] in ("pending", "not_submitted"):
-            # still being sent - or nothing reached the printer (no DYMO service / printer yet): the bridge
-            # shows «Try again»; the series goes on once this label is sent, or the operator stops it.
-            return
-        b["current"] = None
-        if job["status"] != "submitted":
-            flash("error", T("batch_stopped", b=job["barcode"], e=job["error"] or job["status"]))
-            st.session_state["batch_result"] = {"doc": b["doc"], "ok": b["ok"], "n": b["n"]}
-            st.session_state.pop("batch", None)
-            st.rerun()
-        b["ok"] += 1
-    _advance(ctx)
-    st.rerun()  # the bridge must be drawn again with the next label (or the result)
+    if b["rows"]:  # the first label is printing meanwhile: prepare all the others now
+        _prepare(ctx)
+        st.rerun()
+    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
+    states = [rows.get(j["job_key"], {}).get("status") for j in b["jobs"]]
+    b["ok"] = sum(s in ("submitted", "manual_confirmed") for s in states)
+    bad = next((j for j in b["jobs"] if rows.get(j["job_key"], {}).get("status") in
+                ("failed", "rejected", "uncertain", "expired", "cancelled")), None)
+    if bad is not None:
+        row = rows[bad["job_key"]]
+        flash("error", T("batch_stopped", b=row["barcode"], e=row["error"] or row["status"]))
+        for j in b["jobs"]:  # the browser stops at the first problem: the later labels were never sent
+            if rows.get(j["job_key"], {}).get("status") in ("pending", "not_submitted"):
+                ctx.browser.cancel(j["job_key"], operator())
+        _finish(ctx, b, b["ok"])
+        st.rerun()
+    if all(s in ("submitted", "manual_confirmed") for s in states):
+        _finish(ctx, b, b["ok"])
+        st.rerun()
+    # still being sent - or a label was not sent (no DYMO service / printer): the bridge shows «Try again»
 
 
 def _stop(ctx) -> None:
-    b = st.session_state.pop("batch", None)
-    if b:
-        key = st.session_state.get("print_job_key")
-        job = ctx.browser.job(key) if key else None
-        if job is not None and job["status"] == "not_submitted":
-            ctx.browser.cancel(key, operator())  # nothing reached the printer: safe to drop
-        st.session_state["batch_result"] = {"doc": b["doc"], "ok": b["ok"], "n": b["n"]}
+    b = st.session_state.get("batch")
+    if not b:
+        return
+    for j in batch_jobs(ctx):
+        ctx.browser.cancel(j["job_key"], operator())  # a label sent meanwhile is marked uncertain, never lost
+    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
+    _finish(ctx, b, sum(r["status"] in ("submitted", "manual_confirmed") for r in rows.values()))
 
 
 def progress(ctx) -> None:
     b = st.session_state.get("batch")
     if b and b["n"]:
-        i = b["n"] - len(b["queue"])
-        st.progress(min(1.0, b["ok"] / b["n"]), text=T("batch_progress", i=i, n=b["n"]))
-        key = st.session_state.get("print_job_key")
-        job = ctx.browser.job(key) if key else None
-        if job is not None and job["status"] == "not_submitted":
-            st.warning(T("batch_waiting", e=job["error"] or ""))
+        st.progress(min(1.0, b["ok"] / b["n"]), text=T("batch_progress", i=min(b["n"], b["ok"] + 1), n=b["n"]))
+        waiting = [r for r in ctx.browser.statuses([j["job_key"] for j in b["jobs"]]).values()
+                   if r["status"] == "not_submitted"]
+        if waiting:
+            st.warning(T("batch_waiting", e=waiting[0]["error"] or ""))
         st.button("⏹ " + T("batch_stop"), key="batch_stop", on_click=_stop, args=(ctx,))
 
 

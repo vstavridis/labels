@@ -280,3 +280,33 @@ def test_customer_on_label_and_excel_is_the_customer_as_entered(ctx, settings):
     from vspm.excel.xlsx_package import SheetEditor, XlsxPackage
     ed = SheetEditor(XlsxPackage(settings.excel_path.read_bytes()), settings.excel_sheet)
     assert ed.value(excel_rows(settings, job.barcode)[0], "F").value == "ΜΕΤΑΛΙΚΟ ΧΑΧΗ"
+
+
+# ---- a series («Εκτύπωση DYMO / Excel») ---------------------------------------------------------
+def test_series_writes_excel_and_stamps_once_at_the_end(ctx, settings):
+    verify_station(ctx)
+    calls = []
+    ctx.production.photo_stamper = type("S", (), {"request_for_row": lambda self, rid: calls.append(rid)})()
+    rids = [make_row(ctx, row_index=i, weight=str(490 + i)) for i in (1, 2, 3)]
+    jobs = [start(ctx, rid) for rid in rids]
+    ctx.production.defer([j.label_id for j in jobs])
+    for j in jobs:
+        report(ctx, j)
+        lab = ctx.repo.get_label(j.label_id)
+        assert lab["first_printed_at"] and lab["excel_status"] == "pending"  # not written label by label
+    assert calls == [] and excel_rows(settings, jobs[0].barcode) == []
+    ctx.production.finish_series([j.label_id for j in jobs], "tester")
+    for j in jobs:
+        assert ctx.repo.get_label(j.label_id)["excel_status"] == "synchronized"
+        assert len(excel_rows(settings, j.barcode)) == 1
+    assert ctx.production.deferred == set()
+
+
+def test_label_sent_after_the_series_was_stopped_is_not_lost(ctx):
+    verify_station(ctx)
+    job = start(ctx, make_row(ctx))
+    ctx.browser.cancel(job.job_key, "tester")  # «Stop» pressed while the browser was already sending it
+    msgs = report(ctx, job).messages
+    assert ctx.browser.job(job.job_key)["status"] == "uncertain" and msgs
+    with pytest.raises(PreviousPrintUnknown):  # the operator is asked before it is printed again
+        start(ctx, ctx.repo.get_label(job.label_id)["production_row_id"])

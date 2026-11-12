@@ -151,6 +151,14 @@ class BrowserPrintService:
             raise
         return job
 
+    def statuses(self, job_keys: list[str]) -> dict[str, dict]:
+        """{job_key: job row} for several jobs in one query."""
+        if not job_keys:
+            return {}
+        marks = ",".join("?" for _ in job_keys)
+        return {r["job_key"]: dict(r) for r in self.db.query(
+            f"SELECT * FROM print_jobs WHERE job_key IN ({marks})", tuple(job_keys))}
+
     def job(self, job_key: str):
         return self.db.one("SELECT * FROM print_jobs WHERE job_key=?", (job_key,))
 
@@ -197,6 +205,14 @@ class BrowserPrintService:
         status = str(r.get("status"))
         if status not in RESULT_STATUSES:
             return [("error", f"unknown print status '{status}' from the browser")]
+        if job["status"] == "cancelled" and status == "submitted":
+            # The series was stopped while the browser was already sending this label: it may have
+            # printed. Mark it "uncertain" so the operator is asked before this label is printed again.
+            self.db.execute("UPDATE print_jobs SET status='uncertain', reported_at=?, error=? WHERE job_key=? "
+                            "AND status='cancelled'", (utcnow(), "sent after the series was stopped",
+                                                       job["job_key"]))
+            return [("warning", f"{job['barcode']}: sent to the printer after the series was stopped - check "
+                                "whether it came out.")]
         if job["status"] in FINAL:
             return []  # already recorded (idempotent: re-sent from the browser's outbox)
         msgs: list[tuple[str, str]] = []

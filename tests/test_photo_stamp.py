@@ -66,11 +66,38 @@ def test_missing_faint_line_still_finds_the_rows():
     assert g is not None and len(g.rows) == 9
 
 
+def _tilted(data: bytes, angle: float, crop_right: int = 0) -> bytes:
+    img = Image.open(io.BytesIO(data)).rotate(angle, resample=Image.BICUBIC, expand=True, fillcolor="white")
+    if crop_right:
+        img = img.crop((0, 0, img.width - crop_right, img.height))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=92)
+    return buf.getvalue()
+
+
+def test_tilted_phone_photo_is_straightened_to_find_the_cells():
+    for angle in (2.5, -1.7):
+        g = find_grid(Image.open(io.BytesIO(_tilted(form(), angle))))
+        assert g is not None and len(g.rows) == 9, angle
+        assert abs(g.angle + angle) < 0.3  # turned back by the photo's tilt
+        assert abs((g.barcode_x[1] - g.barcode_x[0]) - (COLS[-1] - COLS[-2])) <= 12
+
+
+def test_photo_cut_at_the_right_border_still_uses_the_barcode_column():
+    data = _tilted(form(), 0.0, crop_right=W - COLS[-1] - 1)  # the table's right line is cut off
+    g = find_grid(Image.open(io.BytesIO(data)))
+    assert g is not None and abs(g.barcode_x[0] - COLS[-2]) <= 6  # not the ΔΕΜΑΤΑ column
+    out, mode = stamp(data, [(1, "PG02303")])
+    img = Image.open(io.BytesIO(out))
+    assert mode == "cells" and red_in(img, (COLS[-2] + 4, TOP + ROW_H + 4, img.width - 1, TOP + 2 * ROW_H - 4)) > 50
+    assert red_in(img, (0, 0, COLS[-2] - 4, img.height)) == 0
+
+
 def test_no_table_falls_back_to_a_strip():
     buf = io.BytesIO()
     Image.new("RGB", (800, 600), "white").save(buf, format="JPEG")
     out, mode = stamp(buf.getvalue(), [(1, "VS1")])
-    assert mode == "strip" and Image.open(io.BytesIO(out)).height > 600
+    assert mode == "strip" and Image.open(io.BytesIO(out)).height > 600  # barcodes only, no "#1 -"
 
 
 # ---- Google Drive flow --------------------------------------------------------------------------

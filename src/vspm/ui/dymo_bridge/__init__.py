@@ -28,11 +28,13 @@ def framework_ok() -> bool:
         return False
 
 
-def dymo_bridge(mode: str = "diagnose", *, job: Optional[dict] = None, acked: Optional[list[str]] = None,
-                lang: str = "el", rescan_token: str = "", key: str = "dymo_bridge") -> Optional[dict[str, Any]]:
+def dymo_bridge(mode: str = "diagnose", *, job: Optional[dict] = None, jobs: Optional[list[dict]] = None,
+                acked: Optional[list[str]] = None, lang: str = "el", rescan_token: str = "",
+                key: str = "dymo_bridge") -> Optional[dict[str, Any]]:
     """Render the bridge. Returns the latest report from the browser (or None):
 
     {"report_id", "station_id", "station_name", "diagnostics": {...} | None, "results": [job results]}
     """
-    return _component(mode=mode, job=job, acked=list(acked or []), lang=lang, rescan_token=rescan_token,
+    return _component(mode=mode, job=job, jobs=list(jobs or []), acked=list(acked or []), lang=lang,
+                      rescan_token=rescan_token,
                       key=key, default=None)

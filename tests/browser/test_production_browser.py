@@ -144,8 +144,11 @@ def test_print_all_labels_of_the_document_one_after_the_other(browser, app_serve
             break
         page.wait_for_timeout(500)
     assert btn.is_enabled(), "button still disabled on the first visit of the print page"
+    import time
+    t0 = time.time()
     btn.click()
     page.get_by_text("Τέλος: τυπώθηκαν 3 από 3").first.wait_for(timeout=90000)
+    print(f"series of 3 labels: {time.time() - t0:.1f} s")
     rows = app_ctx.repo.rows_for_document(doc)
     labels = [app_ctx.repo.label_for_row(r.id) for r in rows]
     barcodes = [lab["barcode"] for lab in labels]

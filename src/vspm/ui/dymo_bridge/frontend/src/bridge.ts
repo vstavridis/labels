@@ -34,6 +34,7 @@ interface Args {
   mode: "diagnose" | "print";
   lang: "el" | "en";
   job: Job | null;
+  jobs: Job[];  // a series of labels, printed one after the other on this PC
   acked: string[];
   rescan_token?: string;
 }
@@ -410,9 +411,34 @@ function chooseDefaultPrinter(): void {
 // ---------------------------------------------------------------------------
 interface JobState { status: string; printer: string; at: string; result?: JobResult; }
 
-let args: Args = { mode: "diagnose", lang: "el", job: null, acked: [] };
+let args: Args = { mode: "diagnose", lang: "el", job: null, jobs: [], acked: [] };
 let currentJobView: { job: Job; state: string; message: string; problems: string[] } | null = null;
 const inFlight: Record<string, boolean> = {};
+
+// Series: the labels are printed strictly one after the other, without waiting for the server in
+// between. The first one that is not sent (no printer, failure, check refused) halts the series: the
+// next ones are not printed until the operator acts ("Try again" for a label that was not sent).
+let queue: Job[] = [];
+const queued: Record<string, boolean> = {};
+let running: Job | null = null;
+let halted: Job | null = null;
+
+async function runQueue(): Promise<void> {
+  if (running) return;
+  try {
+    while (queue.length && !halted) {
+      const job = queue[0];
+      running = job;
+      await runJob(job, false);
+      running = null;
+      const state = currentJobView && currentJobView.job.job_key === job.job_key ? currentJobView.state : "";
+      if (state === "submitted") queue.shift();
+      else halted = job;
+    }
+  } finally {
+    running = null;
+  }
+}
 
 function outbox(): JobResult[] {
   return store.get<JobResult[]>("outbox", []);
@@ -625,15 +651,17 @@ function render(): void {
   const recheck = el("button", { "data-testid": "recheck" }, t("recheck")) as HTMLButtonElement;
   recheck.onclick = async () => { initDone = false; await detect(); flush(); };
   buttons.appendChild(recheck);
-  if (args.job && currentJobView && currentJobView.state === "not_submitted") {
+  if (halted && currentJobView && currentJobView.job.job_key === halted.job_key &&
+      currentJobView.state === "not_submitted") {
     const retry = el("button", { "data-testid": "retry", class: "primary" }, t("retry")) as HTMLButtonElement;
     retry.onclick = async () => {
       // not_submitted means nothing reached the printer, so trying again is safe.
-      try { window.localStorage.removeItem("vspm.job." + args.job!.job_key); } catch (e) { /* ignore */ }
+      try { window.localStorage.removeItem("vspm.job." + halted!.job_key); } catch (e) { /* ignore */ }
       currentJobView = null;
       initDone = false;
       await detect();
-      await runJob(args.job!, true);
+      halted = null;
+      await runQueue();
     };
     buttons.appendChild(retry);
   }
@@ -653,7 +681,6 @@ function render(): void {
 // Entry point
 // ---------------------------------------------------------------------------
 let started = false;
-let lastJobKey = "";
 let lastRescan = "";
 
 async function onRender(event: MessageEvent): Promise<void> {
@@ -664,6 +691,7 @@ async function onRender(event: MessageEvent): Promise<void> {
     mode: a.mode === "print" ? "print" : "diagnose",
     lang: a.lang === "en" ? "en" : "el",
     job: a.job || null,
+    jobs: Array.isArray(a.jobs) ? a.jobs : [],
     acked: Array.isArray(a.acked) ? a.acked : [],
     rescan_token: a.rescan_token || "",
   };
@@ -675,13 +703,26 @@ async function onRender(event: MessageEvent): Promise<void> {
     initDone = false;
     await detect();
   }
-  if (args.job && args.job.job_key !== lastJobKey) {
-    lastJobKey = args.job.job_key;
-    currentJobView = null;
-    await runJob(args.job, false);
+  const jobs = args.jobs.length ? args.jobs : (args.job ? [args.job] : []);
+  const wanted: Record<string, boolean> = {};
+  for (const j of jobs) wanted[j.job_key] = true;
+  // Labels the server no longer hands over (sent, cancelled, stopped) leave the queue.
+  queue = queue.filter((j) => wanted[j.job_key] || (running !== null && running.job_key === j.job_key));
+  if (halted && !wanted[halted.job_key]) halted = null;
+  let added = false;
+  for (const j of jobs) {
+    if (!queued[j.job_key]) {
+      queued[j.job_key] = true;
+      queue.push(j);
+      added = true;
+    }
+  }
+  if (added && !running && !halted) {
+    if (!queue.some((j) => currentJobView && currentJobView.job.job_key === j.job_key)) currentJobView = null;
+    await runQueue();
     return;
   }
-  if (!args.job) currentJobView = null;
+  if (!jobs.length && !running) currentJobView = null;
   flush();
 }
 

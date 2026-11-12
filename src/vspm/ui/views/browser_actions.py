@@ -86,8 +86,9 @@ def bridge_section(ctx) -> None:
     job_row = ctx.browser.job(job_key) if job_key else None
     job = st.session_state.get("print_job") if job_row is not None and job_row["status"] in (
         "pending", "not_submitted") else None
-    value = dymo_bridge("print", job=job, acked=st.session_state.get("bridge_acked", []), lang=lang(),
-                        key="bridge_print")
+    jobs = batch_print.batch_jobs(ctx)  # a series: every label still to send, all at once
+    value = dymo_bridge("print", job=None if jobs else job, jobs=jobs,
+                        acked=st.session_state.get("bridge_acked", []), lang=lang(), key="bridge_print")
     messages = process_bridge_value(ctx, value, "print")
     if st.session_state.get("batch"):  # a series: only problems are worth showing, the page moves on
         for level, msg in messages:

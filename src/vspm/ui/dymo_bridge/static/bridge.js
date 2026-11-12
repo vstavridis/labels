@@ -368,9 +368,36 @@ function chooseDefaultPrinter() {
         diag.selected_printer = saved && labelWriters().some((p) => p.name === saved) ? saved : "";
     }
 }
-let args = { mode: "diagnose", lang: "el", job: null, acked: [] };
+let args = { mode: "diagnose", lang: "el", job: null, jobs: [], acked: [] };
 let currentJobView = null;
 const inFlight = {};
+// Series: the labels are printed strictly one after the other, without waiting for the server in
+// between. The first one that is not sent (no printer, failure, check refused) halts the series: the
+// next ones are not printed until the operator acts ("Try again" for a label that was not sent).
+let queue = [];
+const queued = {};
+let running = null;
+let halted = null;
+async function runQueue() {
+    if (running)
+        return;
+    try {
+        while (queue.length && !halted) {
+            const job = queue[0];
+            running = job;
+            await runJob(job, false);
+            running = null;
+            const state = currentJobView && currentJobView.job.job_key === job.job_key ? currentJobView.state : "";
+            if (state === "submitted")
+                queue.shift();
+            else
+                halted = job;
+        }
+    }
+    finally {
+        running = null;
+    }
+}
 function outbox() {
     return store.get("outbox", []);
 }
@@ -587,18 +614,20 @@ function render() {
     const recheck = el("button", { "data-testid": "recheck" }, t("recheck"));
     recheck.onclick = async () => { initDone = false; await detect(); flush(); };
     buttons.appendChild(recheck);
-    if (args.job && currentJobView && currentJobView.state === "not_submitted") {
+    if (halted && currentJobView && currentJobView.job.job_key === halted.job_key &&
+        currentJobView.state === "not_submitted") {
         const retry = el("button", { "data-testid": "retry", class: "primary" }, t("retry"));
         retry.onclick = async () => {
             // not_submitted means nothing reached the printer, so trying again is safe.
             try {
-                window.localStorage.removeItem("vspm.job." + args.job.job_key);
+                window.localStorage.removeItem("vspm.job." + halted.job_key);
             }
             catch (e) { /* ignore */ }
             currentJobView = null;
             initDone = false;
             await detect();
-            await runJob(args.job, true);
+            halted = null;
+            await runQueue();
         };
         buttons.appendChild(retry);
     }
@@ -616,7 +645,6 @@ function render() {
 // Entry point
 // ---------------------------------------------------------------------------
 let started = false;
-let lastJobKey = "";
 let lastRescan = "";
 async function onRender(event) {
     const data = event.data;
@@ -627,6 +655,7 @@ async function onRender(event) {
         mode: a.mode === "print" ? "print" : "diagnose",
         lang: a.lang === "en" ? "en" : "el",
         job: a.job || null,
+        jobs: Array.isArray(a.jobs) ? a.jobs : [],
         acked: Array.isArray(a.acked) ? a.acked : [],
         rescan_token: a.rescan_token || "",
     };
@@ -638,13 +667,29 @@ async function onRender(event) {
         initDone = false;
         await detect();
     }
-    if (args.job && args.job.job_key !== lastJobKey) {
-        lastJobKey = args.job.job_key;
-        currentJobView = null;
-        await runJob(args.job, false);
+    const jobs = args.jobs.length ? args.jobs : (args.job ? [args.job] : []);
+    const wanted = {};
+    for (const j of jobs)
+        wanted[j.job_key] = true;
+    // Labels the server no longer hands over (sent, cancelled, stopped) leave the queue.
+    queue = queue.filter((j) => wanted[j.job_key] || (running !== null && running.job_key === j.job_key));
+    if (halted && !wanted[halted.job_key])
+        halted = null;
+    let added = false;
+    for (const j of jobs) {
+        if (!queued[j.job_key]) {
+            queued[j.job_key] = true;
+            queue.push(j);
+            added = true;
+        }
+    }
+    if (added && !running && !halted) {
+        if (!queue.some((j) => currentJobView && currentJobView.job.job_key === j.job_key))
+            currentJobView = null;
+        await runQueue();
         return;
     }
-    if (!args.job)
+    if (!jobs.length && !running)
         currentJobView = null;
     flush();
 }
