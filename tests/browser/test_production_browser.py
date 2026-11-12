@@ -170,7 +170,9 @@ def test_two_tabs_print_the_row_only_once(browser, app_server, dymo_reset, app_c
     assert len(excel_rows(app_ctx, barcode)) == 1
     text_b = page_b.locator("section.main").inner_text() if page_b.locator("section.main").count() else \
         page_b.inner_text("body")
-    assert ("ήδη" in text_b) or ("already" in text_b) or ("Επανεκτύπωση" in text_b)
+    # tab B says why it printed nothing (a flash message may already be gone; the series result stays)
+    assert ("ήδη" in text_b) or ("already" in text_b) or ("Επανεκτύπωση" in text_b) or \
+        ("τυπώθηκαν 0 από" in text_b), text_b[-1500:]
     ctx.close()
 
 

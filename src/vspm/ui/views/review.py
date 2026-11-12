@@ -84,10 +84,10 @@ def _changed(original: pd.DataFrame, edited: pd.DataFrame) -> bool:
     A new row that is still completely empty is not a change yet (it is saved once it has a value)."""
     def is_new(v) -> bool:
         return v is None or (isinstance(v, float) and math.isnan(v))
-    new = edited[[is_new(v) for v in edited["id"]]]
-    if any(any(_s(r.get(f)) for f, _, _ in FIELDS) for _, r in new.iterrows()):
+    mask = edited["id"].map(is_new).astype(bool)  # .loc: an empty list would select columns, not rows
+    if any(any(_s(r.get(f)) for f, _, _ in FIELDS) for _, r in edited.loc[mask].iterrows()):
         return True
-    edited = edited[[not is_new(v) for v in edited["id"]]]
+    edited = edited.loc[~mask]
     if list(original["id"]) != list(edited["id"]):
         return True
     for col in EDITABLE:
@@ -214,6 +214,8 @@ def render() -> None:
         ver = st.session_state.get("editor_ver", 0)
         edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
                                 width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
+        # With no rows the editor can return a frame without the hidden columns (id, #): put them back.
+        edited = edited.reindex(columns=list(original.columns))
         if _changed(original, edited):
             for m in apply_changes(ctx, doc_id, original, edited):  # saved at once - no Save button
                 flash("warning", m)

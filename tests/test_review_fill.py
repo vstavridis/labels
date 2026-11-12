@@ -135,3 +135,22 @@ def test_print_all_prints_every_label_of_the_document_and_writes_excel(env):
     assert not any(b.label.startswith("🖨️ Εκτύπωση DYMO / Excel") for b in at.button)  # nothing left
     btns = [b.label for b in at.button]
     assert not any("Εκτύπωση & Αποθήκευση" in b for b in btns)
+
+
+def test_review_page_of_a_document_without_rows(env):
+    """Regression: KeyError 'id' when the scan had no rows yet (seen in the Streamlit Cloud check)."""
+    from vspm.services.context import build_context
+    ctx = build_context(env)
+    doc = ctx.documents.latest(10)[0].doc_id
+    assert ctx.repo.rows_for_document(doc) == []
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    key = f"editor_{doc}_0_0"  # the operator adds a row by hand
+    at.session_state[key] = {"edited_rows": {}, "added_rows": [{"material": "ΓΑΛΒΑΝΙΖΕ", "weight": "100"}],
+                             "deleted_rows": []}
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert [r.material for r in ctx.repo.rows_for_document(doc)] == ["ΓΑΛΒΑΝΙΖΕ"]
