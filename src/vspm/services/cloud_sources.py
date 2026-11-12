@@ -362,6 +362,12 @@ class WorkbookSync:
         self.od._save(role, url, meta, sha=sha256(data), synced=True)
         return info
 
+    def read_bytes(self) -> bytes:
+        """The production workbook as it is now on OneDrive (read-only download)."""
+        item = self.od.resolve("workbook", self.config.get("onedrive_workbook_url"))
+        data, _ = self.od.files.download(item.drive_id, item.item_id)
+        return data
+
     def validation(self) -> dict:
         return self.config.get_json("excel_validation")
 

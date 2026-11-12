@@ -156,24 +156,41 @@ def test_review_page_of_a_document_without_rows(env):
     assert [r.material for r in ctx.repo.rows_for_document(doc)] == ["ΓΑΛΒΑΝΙΖΕ"]
 
 
-def test_print_page_says_which_barcode_series_is_missing(env, monkeypatch, tmp_path):
+def _db_registry(env, monkeypatch, tmp_path):
     monkeypatch.setenv("VSPM_BARCODE_MODE", "database")
     if not env.database_url:
         monkeypatch.setenv("VSPM_REGISTRY_DATABASE_URL", f"sqlite:///{tmp_path / 'reg.sqlite3'}")
     from vspm.ui.common import get_context
     get_context.clear()
-    ctx = get_context()
+    return get_context()
+
+
+def test_series_continue_after_the_last_barcode_automatically(env, monkeypatch, tmp_path):
+    from vspm.services import series_sync
+    ctx = _db_registry(env, monkeypatch, tmp_path)
+    assert ctx.allocator.sequences() == []
+    # the workbook already has VS11555 (printed by hand, newer than the DYMO file's counter 11546)
+    monkeypatch.setattr(series_sync, "workbook_barcodes", lambda c: (["VS9000", "VS11555", "PG0x", "PG7100"], None))
+    res = series_sync.sync_series(ctx, "test")
+    nxt = {q["series"]: q["next_value"] for q in ctx.allocator.sequences()}
+    assert nxt["VS"] == 11556 and res.sources["VS"] == "Excel"   # last label VS11555 -> VS11556
+    assert nxt["PG"] == 7101                                    # PG7100 in the workbook
+    assert nxt["PG0"] == 2278 and res.sources["PG0"] == "DYMO"  # only the DYMO file's counter
+    # never backwards: a series already further is left alone; later labels move it forward again
+    ctx.allocator.set_sequence("EX", "EX", 5000, format_width=3, operator="test")
+    monkeypatch.setattr(series_sync, "workbook_barcodes", lambda c: (["VS11600"], None))
+    res = series_sync.sync_series(ctx, "test")
+    nxt = {q["series"]: q["next_value"] for q in ctx.allocator.sequences()}
+    assert nxt["EX"] == 5000 and nxt["VS"] == 11601 and set(res.set) == {"VS"}
+
+
+def test_print_page_sets_the_series_by_itself(env, monkeypatch, tmp_path):
+    ctx = _db_registry(env, monkeypatch, tmp_path)
     doc = ctx.documents.latest(10)[0].doc_id
     ctx.documents.run_ocr(doc, ctx.ocr_provider())
     at = AppTest.from_string(PRINT_PAGE.format(doc=doc), default_timeout=120)
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any("Σειρές barcode" in e.value for e in at.error)  # says what to do, before anything is pressed
-    btn = next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel"))
-    assert btn.disabled
-    prefixes = {ctx.templates.spec(r.template_key).barcode_prefix for r in ctx.repo.rows_for_document(doc)}
-    for p in prefixes:
-        ctx.allocator.set_sequence(p, p, 500, format_width=3, operator="test")
-    at.run()
-    assert not any("Σειρές barcode" in e.value for e in at.error)
+    assert not any("Σειρές barcode" in e.value for e in at.error)  # nothing to set by hand
     assert not next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel")).disabled
+    assert {q["series"] for q in ctx.allocator.sequences()} >= {"VS", "PG", "PG0", "EX"}

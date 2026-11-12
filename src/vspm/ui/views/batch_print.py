@@ -68,8 +68,23 @@ def _skip(ctx, row_id: int, e: Exception) -> None:
     flash("warning", T("batch_skipped", i=row.row_index if row else row_id, e=e))
 
 
+def auto_series(ctx) -> None:
+    """Continue every barcode series after the last number used (DYMO file, workbook, app)."""
+    from vspm.services.series_sync import sync_series
+    try:
+        res = sync_series(ctx, operator())
+    except Exception as e:  # noqa: BLE001 - printing then reports the registry's own error
+        flash("warning", f"Barcode: {e}")
+        return
+    for series, nxt in res.set.items():
+        flash("info", T("series_auto_set", s=series, b=nxt, src=res.sources[series]))
+    for w in res.warnings:
+        flash("warning", w)
+
+
 def start(ctx, doc_id: int) -> None:
     """on_click of «Print DYMO / Excel»."""
+    auto_series(ctx)  # labels printed by hand with DYMO meanwhile are never issued again
     ids = _confirm_rows(ctx, rows_to_print(ctx, doc_id))
     if ctx.settings.printer_mode.value != "browser":
         ok = 0
@@ -183,6 +198,12 @@ def button(ctx, doc_id: int, *, disabled: bool = False) -> None:
         st.success("✅ " + T("all_printed"))
         return
     missing = [] if running else missing_series(ctx, todo)
+    if missing:  # set them automatically from the DYMO file / workbook, then look again (once a minute at most)
+        import time
+        if time.time() - st.session_state.get("series_sync_at", 0) > 60:
+            st.session_state["series_sync_at"] = time.time()
+            auto_series(ctx)
+            missing = missing_series(ctx, todo)
     if missing:
         st.error(T("series_missing", s=", ".join(missing)))
     if not running and disabled and ctx.settings.printer_mode.value == "browser":

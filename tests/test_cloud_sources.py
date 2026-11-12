@@ -413,3 +413,11 @@ def test_value_equal_to_secrets_is_not_stored_and_reset_works(settings, ms):
     assert cfg.source("onedrive_templates_url") == "app" and cfg.get("onedrive_templates_url") == "Documents/Labels"
     cfg.reset("onedrive_templates_url", "admin")
     assert cfg.get("onedrive_templates_url") == FOLDER_LINK
+
+
+def test_last_barcodes_read_from_the_onedrive_workbook_without_writing(settings, ms):
+    from vspm.services.series_sync import workbook_barcodes
+    ctx = ready_ctx(settings, ms)
+    codes, problem = workbook_barcodes(ctx)
+    assert problem is None and codes and all(isinstance(c, str) for c in codes)
+    assert ms.puts() == []  # read-only

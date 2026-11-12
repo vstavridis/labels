@@ -47,11 +47,13 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "The label was not sent yet: {e}. Check the DYMO and press Try again in the printer box; the "
                       "series then goes on by itself."),
     "batch_stop": ("Διακοπή σειράς", "Stop the series"),
-    "series_missing": ("Δεν έχει οριστεί ο επόμενος αριθμός barcode για τη σειρά {s}. Ένας admin τον ορίζει στις "
-                       "Ρυθμίσεις → Σειρές barcode (ο ΕΠΟΜΕΝΟΣ ελεύθερος αριθμός, μεγαλύτερος από κάθε ετικέτα {s} "
-                       "που έχει ήδη τυπωθεί).",
-                       "No next barcode number set for series {s}. An admin sets it in Settings → Barcode series "
-                       "(the NEXT free number, higher than every {s} label already printed)."),
+    "series_missing": ("Δεν βρέθηκε ο τελευταίος αριθμός barcode της σειράς {s}: ούτε μετρητής στο αρχείο DYMO "
+                       "ούτε barcode {s} στη στήλη H του Excel. Ελέγξτε τις Ρυθμίσεις → Πηγές cloud (πρότυπα, "
+                       "Excel) ή ορίστε τον αριθμό στις Ρυθμίσεις → Σειρές barcode.",
+                       "The last barcode of series {s} was not found: no counter in the DYMO file and no {s} "
+                       "barcode in column H of the workbook. Check Settings → Cloud sources (templates, workbook) "
+                       "or set the number in Settings → Barcode series."),
+    "series_auto_set": ("Σειρά {s}: συνεχίζει από {b} (βάσει {src}).", "Series {s}: continues from {b} (from {src})."),
     "print_all_needs_station": ("Ενεργοποιείται όταν αυτός ο υπολογιστής έχει τυπώσει και επιβεβαιώσει το TEST0001 "
                                 "(σελίδα «Εκτυπωτής DYMO»).",
                                 "Available once this PC printed and confirmed TEST0001 (page DYMO printer)."),

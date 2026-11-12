@@ -179,7 +179,7 @@ You should now see the sign-in page. Sign in with your admin e-mail.
 7. **Test Google Drive connection** → the 5 latest scans are listed. If it fails, check that the folder is
    shared with the service account e-mail shown there.
 8. **⚙️ Settings → Customer rules**: enter or check the customer abbreviations.
-9. **Do not set the barcode series yet.** Until you do, the app refuses to print production labels.
+9. The barcode series are set **automatically** (see step 8); nothing to enter.
 
 (The manual upload under *Settings → DYMO templates* still exists as a fallback, e.g. if OneDrive is
 unreachable.)
@@ -197,14 +197,18 @@ Full sheet: [docs/WINDOWS_PC_SETUP.md](docs/WINDOWS_PC_SETUP.md). In short, on *
    scanner must read `TEST0001` — then press **Yes — correct label**. TEST0001 uses no real barcode, writes
    nothing to Excel and does not touch the DYMO counters.
 
-## Step 8 — Set the barcode numbers (only after step 7 worked on BOTH PCs)
+## Step 8 — Barcode numbers (automatic)
 
-1. Find the highest barcode already used for each type — in the workbook **and** on the DYMO counters of both
-   PCs (open each template in DYMO Label and look at the counter). Do not change the counters.
-2. **⚙️ Settings → Barcode series** → for each type enter the **next free** number, type the resulting barcode
-   in the confirmation box → **Save**. It can never be moved backwards.
-3. From now on the app gives every label its number from the database. **Do not print app labels from DYMO
-   Label with its counter.** Anyone who still prints by hand reserves a block on the same page.
+Nothing to enter. Before every «Εκτύπωση DYMO / Excel» the app continues each series (VS, PG, PG0, EX)
+after the last number already used: the highest of the COUNTER saved in the DYMO template file on OneDrive,
+the last barcode of that type in column H of the workbook + 1, and the last number the app issued + 1.
+Example: the last label in the workbook is VS11555 → the next one is VS11556. The number only moves
+forward; it is never moved back. *⚙️ Settings → Barcode series* shows the series and still lets an admin
+set a number by hand.
+
+A label printed by hand from DYMO Label is taken into account once it is in the workbook (or the
+template file was saved with its counter). If both PCs may print by hand, enter those labels in the workbook
+before printing from the app.
 
 ## Step 9 — Test with the two PCs
 
