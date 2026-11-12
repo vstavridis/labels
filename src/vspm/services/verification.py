@@ -183,10 +183,17 @@ def verify_label(ctx, label_id: int) -> Report:
     if lab["excel_status"] != "synchronized":
         rep.add("exactly one Excel record", None, f"Excel status is '{lab['excel_status']}'")
         return rep
-    data = ctx.writer.read_bytes()
-    ed = SheetEditor(XlsxPackage(data), ctx.writer.sheet)
+    try:
+        if ctx.settings.excel_mode.value == "onedrive" and getattr(ctx, "cloud", None) is not None:
+            data, book = ctx.cloud.workbook.read_bytes(), "OneDrive workbook"  # read-only download
+        else:
+            data, book = ctx.writer.read_bytes(), ctx.writer.path.name
+    except Exception as e:  # noqa: BLE001 - the check reports it, never crashes the page
+        rep.add("exactly one Excel record", False, f"workbook not readable: {e}")
+        return rep
+    ed = SheetEditor(XlsxPackage(data), ctx.settings.excel_sheet)
     rows = ed.find_rows_with_value("H", lab["barcode"])
-    rep.add("exactly one Excel record", len(rows) == 1, f"row(s) {rows} in {ctx.writer.path.name}")
+    rep.add("exactly one Excel record", len(rows) == 1, f"row(s) {rows} in {book}")
     if len(rows) != 1:
         return rep
     r = rows[0]

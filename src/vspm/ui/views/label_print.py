@@ -47,6 +47,7 @@ def render() -> None:
         station_ok = not browser_mode or not ctx.settings.require_verified_station or ctx.browser.station_verified(
             st.session_state.get("station_id"), st.session_state.get("station_printer"))
         batch_print.button(ctx, doc_id, disabled=not station_ok)
+        batch_print.stamp_status(ctx, doc_id)
     row = ctx.repo.get_row(row_id)
     label = ctx.repo.label_for_row(row_id)
 

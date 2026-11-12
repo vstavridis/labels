@@ -421,3 +421,14 @@ def test_last_barcodes_read_from_the_onedrive_workbook_without_writing(settings,
     codes, problem = workbook_barcodes(ctx)
     assert problem is None and codes and all(isinstance(c, str) for c in codes)
     assert ms.puts() == []  # read-only
+
+
+def test_label_check_reads_the_onedrive_workbook(settings, ms):
+    """Regression: «Έλεγχος ετικέτας και Excel» looked for a local workbook file on the cloud and crashed."""
+    from vspm.services.verification import verify_label
+    ctx = ready_ctx(settings, ms)
+    out, lab = make_printed_label(ctx)
+    rep = verify_label(ctx, lab["id"])
+    check = next(c for c in rep.checks if c.name == "exactly one Excel record")
+    assert check.ok, check.detail
+    assert "OneDrive" in check.detail

@@ -296,3 +296,31 @@ def button(ctx, doc_id: int, *, disabled: bool = False) -> None:
         st.caption(T("print_all_needs_station"))
     st.button(f"🖨️ {T('print_all')} ({len(todo)})", type="primary", width="stretch", key="print_all",
               disabled=disabled or running or bool(missing), help=T("print_all_help", n=len(todo)), on_click=start, args=(ctx, doc_id))
+
+
+def _stamp_now(ctx, doc_id: int) -> None:
+    try:
+        res = ctx.stamper.stamp_document(doc_id, operator())
+        flash("success", T("stamp_done", m=res))
+    except Exception as e:  # noqa: BLE001 - shown to the operator
+        flash("error", T("stamp_failed", e=e))
+
+
+def stamp_status(ctx, doc_id: int) -> None:
+    """Whether the printed barcodes are on the scan in Google Drive (and why not)."""
+    stamper = getattr(ctx, "stamper", None)
+    if stamper is None or not stamper.available():
+        return
+    printed = stamper.printed_barcodes(doc_id)
+    if not printed:
+        return
+    rec = stamper.record(doc_id)
+    import json
+    if rec is not None and rec["status"] == "done" and json.loads(rec["barcodes_json"]) == [list(e) for e in printed]:
+        st.caption("🖼️ " + T("stamp_ok", n=len(printed)))
+        return
+    if rec is not None and rec["status"] == "error":
+        st.warning("🖼️ " + T("stamp_failed", e=rec["error"]))
+    else:
+        st.caption("🖼️ " + T("stamp_waiting"))
+    st.button("🖼️ " + T("stamp_retry"), key=f"stamp_now_{doc_id}", on_click=_stamp_now, args=(ctx, doc_id))
