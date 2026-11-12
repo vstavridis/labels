@@ -20,7 +20,6 @@ FIELDS = [
     ("weight", "ΚΙΛΑ", "Weight (kg)"),
     ("pieces", "ΤΕΜΑΧΙΑ", "Pieces"),
     ("packages", "ΔΕΜΑΤΑ", "Packages"),
-    ("source_barcode", "BARCODE (χειρόγρ.)", "Handwritten barcode"),
     ("source_roll", "ΑΡ. ΡΟΛΟΥ", "Roll no."),
     ("location", "ΤΟΠΟΘΕΣΙΑ", "Location"),
     ("document_date", "ΗΜΕΡ/ΝΙΑ", "Doc. date"),
@@ -41,7 +40,7 @@ def to_frame(ctx, rows: list[ProductionRow]) -> pd.DataFrame:
              "template": r.template_key.value if r.template_key else None}
         for f, _, _ in FIELDS:
             d[f] = getattr(r, f)
-        d["flags"] = " ".join(f"⚠{k}" for k, v in r.flags.items() if v == "uncertain") + (
+        d["flags"] = " ".join(f"⚠{k}" for k, v in r.flags.items() if v == "uncertain" and k != "source_barcode") + (
             " ⚠label-type" if r.template_needs_confirmation else "")
         d["status"] = S(r.status.value)
         d["barcode"] = label["barcode"] if label else ""
@@ -139,6 +138,9 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
                     else sel.short_name
             ctx.repo.add_row(row)
             continue
+        before = original.loc[original["id"] == rid]
+        if len(before) and all(_s(before.iloc[0].get(c)) == _s(er.get(c)) for c in EDITABLE if c in original.columns):
+            continue  # unchanged row: no database round trips
         row = ctx.repo.get_row(int(rid))
         if row is None:
             continue
@@ -212,46 +214,57 @@ def render() -> None:
             colcfg["customer_full"] = st.column_config.TextColumn("Customer" if en else "ΠΕΛΑΤΗΣ")
             colcfg["customer_short"] = None
         ver = st.session_state.get("editor_ver", 0)
-        edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
-                                width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
+        names = {f: (eng if en else el) for f, el, eng in FIELDS}
+        names["template"] = T("template")
+        if same:
+            names["customer_full"] = "Customer" if en else "ΠΕΛΑΤΗΣ"
+        # A form: editing the table does not reload the page cell by cell (that was slow). The changes are
+        # saved once, with «Ετικέτα & εκτύπωση» or a Fill button.
+        with st.form(f"review_{doc_id}_{ver}", border=False):
+            order = [c for c in original.columns if c in FILL_COLUMNS]
+            st.caption(T("fill_help"))
+            fill_clicked = None
+            per_row = 6
+            for start in range(0, len(order), per_row):
+                cols = st.columns(per_row)
+                for i, col in enumerate(order[start:start + per_row]):
+                    if cols[i].form_submit_button(f"⬇ {names[col]}", key=f"fill_{col}", width="stretch",
+                                                  help=T("fill_one_help", c=names[col])):
+                        fill_clicked = col
+            edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
+                                    width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
+            st.caption("✔ " + T("autosaved"))
+            go = st.form_submit_button("🖨️ " + T("nav_print"), type="primary", width="stretch")
         # With no rows the editor can return a frame without the hidden columns (id, #): put them back.
         edited = edited.reindex(columns=list(original.columns))
-        if _changed(original, edited):
-            for m in apply_changes(ctx, doc_id, original, edited):  # saved at once - no Save button
+        if fill_clicked:
+            filled, n = fill_down(edited, fill_clicked)
+            msgs = apply_changes(ctx, doc_id, original, filled)
+            if fill_clicked == "template":  # choosing the type for all rows is the operator's confirmation
+                value = _s(filled.sort_values("#").iloc[0]["template"]) if len(filled) else ""
+                for r in ctx.repo.rows_for_document(doc_id):
+                    if r.label_id is None and r.template_key and r.template_key.value == value \
+                            and r.template_needs_confirmation:
+                        r.template_needs_confirmation = False
+                        r.flags.pop("template_key", None)
+                        ctx.repo.save_row(r)
+            for m in msgs:
                 flash("warning", m)
+            flash("success", T("filled", n=n, c=names[fill_clicked]))
             st.session_state["editor_ver"] = ver + 1
             st.rerun()
-        fills = fill_candidates(original)
-        if fills:
-            st.caption(T("fill_help"))
-            names = {f: (eng if en else el) for f, el, eng in FIELDS}
-            names["template"] = T("template")
-            if same:
-                names["customer_full"] = "Customer" if en else "ΠΕΛΑΤΗΣ"
-            cols = st.columns(min(4, len(fills)))
-            for i, (col, value) in enumerate(fills.items()):
-                short = value if len(value) <= 18 else value[:17] + "…"
-                if cols[i % len(cols)].button(f"⬇ {names[col]}: {short}", key=f"fill_{col}", width="stretch",
-                                              help=T("fill_one_help", c=names[col], v=value)):
-                    filled, n = fill_down(original, col)
-                    msgs = apply_changes(ctx, doc_id, original, filled)
-                    if col == "template":  # choosing the type for all rows is the operator's confirmation
-                        for r in ctx.repo.rows_for_document(doc_id):
-                            if r.label_id is None and r.template_key and r.template_key.value == value \
-                                    and r.template_needs_confirmation:
-                                r.template_needs_confirmation = False
-                                r.flags.pop("template_key", None)
-                                ctx.repo.save_row(r)
-                    for m in msgs:
-                        flash("warning", m)
-                    flash("success", T("filled", n=n, c=names[col]))
-                    st.session_state["editor_ver"] = ver + 1
-                    st.rerun()
+        if go:
+            if _changed(original, edited):
+                for m in apply_changes(ctx, doc_id, original, edited):
+                    flash("warning", m)
+            st.session_state["editor_ver"] = ver + 1
+            page = st.session_state.get("_pages", {}).get("print")
+            if page is not None:
+                st.switch_page(page)
+            st.rerun()
         for r in rows:
             reasons = [f"#{r.row_index}: {r.template_reason}"] if r.template_reason else []
             notes = [f"{k[5:]}: {v}" for k, v in r.flags.items() if k.startswith("note:")]
             if reasons or notes:
                 st.caption(" · ".join(reasons + notes))
-        st.caption("✔ " + T("autosaved"))
-        if st.button("🖨️ " + T("nav_print"), type="primary", width="stretch"):
-            st.switch_page(st.session_state["_pages"]["print"])
+

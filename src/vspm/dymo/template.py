@@ -52,8 +52,12 @@ def parse_template_files(value: str) -> dict[str, str]:
 class TemplateStore:
     """Templates uploaded through the app, stored byte-exact in the database (all versions kept)."""
 
+    ACTIVE_TTL = 30.0  # seconds; a template changed on another server is picked up within this time
+
     def __init__(self, db):
         self.db = db
+        self._active: dict[str, tuple[float, Any]] = {}  # key -> (time read, row)
+        self._by_sha: dict[tuple[str, str], bytes] = {}  # a version never changes
 
     @staticmethod
     def content(row) -> bytes:
@@ -61,13 +65,27 @@ class TemplateStore:
         return base64.b64decode(row["content_b64"])
 
     def active(self, key: TemplateKey):
-        return self.db.one("SELECT * FROM label_templates WHERE template_key=? AND active=1 ORDER BY id DESC LIMIT 1",
-                           (TemplateKey(key).value,))
+        """The active version (read at most every ACTIVE_TTL seconds: each read moves the whole file)."""
+        import time
+        k = TemplateKey(key).value
+        hit = self._active.get(k)
+        if hit is not None and time.monotonic() - hit[0] < self.ACTIVE_TTL:
+            return hit[1]
+        row = self.db.one("SELECT * FROM label_templates WHERE template_key=? AND active=1 ORDER BY id DESC LIMIT 1",
+                          (k,))
+        row = dict(row) if row is not None else None
+        self._active[k] = (time.monotonic(), row)
+        return row
 
     def by_sha(self, key: TemplateKey, sha256: str) -> bytes | None:
-        row = self.db.one("SELECT * FROM label_templates WHERE template_key=? AND sha256=?",
-                          (TemplateKey(key).value, sha256))
-        return self.content(row) if row else None
+        k = (TemplateKey(key).value, sha256)
+        if k in self._by_sha:
+            return self._by_sha[k]
+        row = self.db.one("SELECT * FROM label_templates WHERE template_key=? AND sha256=?", k)
+        if row is None:
+            return None
+        self._by_sha[k] = self.content(row)
+        return self._by_sha[k]
 
     def versions(self, key: TemplateKey | None = None) -> list:
         sql = ("SELECT id, template_key, sha256, filename, counter_prefix, active, uploaded_by, uploaded_at "
@@ -103,6 +121,7 @@ class TemplateStore:
                               info["prefix"] if info else None, user, utcnow()))
             self.db.audit("template", key.value, "template_uploaded", {"file": filename, "sha256": tpl.sha256},
                           user, conn=conn)
+        self._active.pop(key.value, None)
         return tpl.sha256
 
 

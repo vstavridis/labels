@@ -35,6 +35,9 @@ class PhotoStamper:
         self.documents = documents
         self.enabled = enabled
         self._lock = threading.Lock()  # one stamp at a time in this app instance
+        self._queue_lock = threading.Lock()
+        self._waiting: set[int] = set()
+        self._worker = False
 
     @property
     def source(self):
@@ -73,7 +76,38 @@ class PhotoStamper:
         row = self.repo.get_row(row_id)
         if row is None or row.document_id is None:
             return
-        threading.Thread(target=self._safe, args=(row.document_id,), daemon=True).start()
+        self.request_document(row.document_id)
+
+    def request_document(self, doc_id: int, delay: float = 2.0) -> None:
+        """Queue a sheet for stamping. One background worker; labels printed in quick succession are
+        written onto the photo together (one download / upload) after a short pause."""
+        with self._queue_lock:
+            self._waiting.add(doc_id)
+            if self._worker:
+                return
+            self._worker = True
+        threading.Thread(target=self._work, args=(delay,), name="vspm-stamp", daemon=True).start()
+
+    def _work(self, delay: float) -> None:
+        import time
+        while True:
+            time.sleep(delay)
+            with self._queue_lock:
+                if not self._waiting:
+                    self._worker = False
+                    return
+                docs, self._waiting = sorted(self._waiting), set()
+            for doc_id in docs:
+                self._safe(doc_id)
+
+    def catch_up(self) -> int:
+        """Stamp every sheet whose printed barcodes are not on its photo yet (e.g. after a restart)."""
+        if not self.available():
+            return 0
+        docs = self.pending_documents()
+        for d in docs:
+            self.request_document(d, delay=0.5)
+        return len(docs)
 
     def _safe(self, doc_id: int) -> None:
         try:

@@ -15,7 +15,7 @@ from vspm.domain.models import ExtractedDocument
 from vspm.integrations.documents import page_images, to_jpeg
 from vspm.integrations.ocr.base import SYSTEM_PROMPT, USER_PROMPT, OcrError, OcrInput, OcrNotAllowedError, OcrOutput
 
-REASONING_EFFORT = {"low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
+REASONING_EFFORT = {"minimal": "minimal", "low": "low", "medium": "medium", "high": "high", "xhigh": "high", "max": "high"}
 DROP_KEYS = {"default", "title"}  # not used by strict structured outputs
 
 
@@ -48,7 +48,7 @@ def strict_schema() -> dict:
 class OpenAIOcr:
     name = "openai"
 
-    def __init__(self, api_key: str, model: str = "gpt-5", effort: str = "low", upload_consent: bool = False,
+    def __init__(self, api_key: str, model: str = "gpt-5", effort: str = "minimal", upload_consent: bool = False,
                  client=None, max_side: int = 1600):
         if not upload_consent:
             raise OcrNotAllowedError(
@@ -89,7 +89,10 @@ class OpenAIOcr:
             max_completion_tokens=16000,
         )
         if self.model.startswith(("gpt-5", "o1", "o3", "o4")):  # reasoning models
-            kwargs["reasoning_effort"] = REASONING_EFFORT.get(self.effort, "low")
+            effort = REASONING_EFFORT.get(self.effort, "minimal")
+            if effort == "minimal" and not self.model.startswith("gpt-5"):
+                effort = "low"  # "minimal" exists for the gpt-5 family only
+            kwargs["reasoning_effort"] = effort
         try:
             resp = self.client.chat.completions.create(**kwargs)
         except o.AuthenticationError as e:

@@ -9,6 +9,7 @@ any other result stops the series so the operator can check the printer.
 
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 import streamlit as st
@@ -18,6 +19,8 @@ from vspm.services.production import (
     AlreadyPrinted, PossibleDuplicate, PreviousPrintUnknown, ProductionError, StationNotVerified, ValidationFailed,
 )
 from vspm.ui.common import T, flash, operator, session_id
+
+log = logging.getLogger(__name__)
 
 # Errors the operator clears by printing (confirming): an uncertain AI value, the template, the approval.
 CONFIRMABLE = "uncertain OCR value"
@@ -84,20 +87,43 @@ def auto_series(ctx) -> None:
         flash("warning", w)
 
 
+_bg = {"at": 0.0}
+_bg_lock = __import__("threading").Lock()
+
+
+def background_upkeep(ctx) -> None:
+    """When the print page opens (at most every 2 minutes per server): in a background thread, continue
+    the barcode series after labels printed by hand meanwhile (DYMO file / workbook), and finish Excel
+    rows and scan stamps still waiting. Nothing of this delays a click."""
+    import threading
+    import time
+    with _bg_lock:
+        if time.time() - _bg["at"] < 120:
+            return
+        _bg["at"] = time.time()
+    user = operator()
+
+    def run():
+        from vspm.services.series_sync import sync_series
+        try:
+            sync_series(ctx, user)
+        except Exception as e:  # noqa: BLE001 - the print page shows a missing series by itself
+            log.warning("barcode series sync failed: %s", e)
+        try:
+            ctx.production.catch_up(user)
+        except Exception as e:  # noqa: BLE001
+            log.warning("catch-up of Excel rows / scan stamps failed: %s", e)
+
+    threading.Thread(target=run, name="vspm-upkeep", daemon=True).start()
+
+
 def start(ctx, doc_id: int) -> None:
     """on_click of «Print DYMO / Excel»."""
-    import time
-    if time.time() - st.session_state.get("series_sync_at", 0) > 30:
-        st.session_state["series_sync_at"] = time.time()
-        auto_series(ctx)  # labels printed by hand with DYMO meanwhile are never issued again
-    ids = _confirm_rows(ctx, rows_to_print(ctx, doc_id))
     if ctx.settings.printer_mode.value != "browser":
-        ok, done = 0, []
+        ids = _confirm_rows(ctx, rows_to_print(ctx, doc_id))
+        ok = 0
         for rid in ids:  # server-side printer: one after the other within this click
             try:
-                label = ctx.production.prepare_label(rid, operator())
-                ctx.production.defer([label["id"]])
-                done.append(label["id"])
                 out = ctx.production.print_and_save(rid, operator=operator())
                 ok += int(out.print_ok)
                 if not out.print_ok:
@@ -108,10 +134,9 @@ def start(ctx, doc_id: int) -> None:
                 _skip(ctx, rid, e)
             except (ValidationFailed, AlreadyPrinted, ProductionError) as e:
                 _skip(ctx, rid, e)
-        for m in ctx.production.finish_series(done, operator()):
-            flash("info", m)
         flash("success" if ok == len(ids) else "warning", T("batch_done", ok=ok, n=len(ids)))
         return
+    ids = [r.id for r in rows_to_print(ctx, doc_id)]  # confirmed one by one while preparing (faster start)
     st.session_state.pop("batch_result", None)
     st.session_state["batch"] = {"doc": doc_id, "rows": ids, "n": len(ids), "jobs": [], "labels": [], "ok": 0}
     _prepare(ctx, limit=1)  # the first label goes to the printer at once; the others follow in the next run
@@ -148,6 +173,13 @@ def _prepare(ctx, limit: Optional[int] = None) -> None:
     n = 0
     while b and b["rows"] and (limit is None or n < limit):
         rid = b["rows"][0]
+        left = ctx.production.approve_row(rid, operator())  # pressing the button confirms the row
+        if left:
+            b["rows"] = b["rows"][1:]
+            row = ctx.repo.get_row(rid)
+            flash("error", T("batch_skipped", i=row.row_index if row else rid,
+                             e="; ".join(f"{k}: {v}" for k, v in left.items())))
+            continue
         try:
             job = _start_job(ctx, b, rid)
         except PossibleDuplicate as e:
@@ -171,7 +203,6 @@ def _prepare(ctx, limit: Optional[int] = None) -> None:
         if job is None:
             b["rows"] = b["rows"][1:]
             continue
-        ctx.production.defer([job.label_id])
         b["jobs"] = b["jobs"] + [job.for_browser()]
         b["labels"] = b["labels"] + [job.label_id]
         b["rows"] = b["rows"][1:]
@@ -188,8 +219,6 @@ def batch_jobs(ctx) -> list[dict]:
 
 
 def _finish(ctx, b: dict, ok: int) -> None:
-    for m in ctx.production.finish_series(b["labels"], operator()):
-        flash("info", m)
     st.session_state["batch_result"] = {"doc": b["doc"], "ok": ok, "n": b["n"]}
     st.session_state.pop("batch", None)
 
@@ -199,8 +228,8 @@ def step(ctx) -> None:
     b = st.session_state.get("batch")
     if not b:
         return
-    if b["rows"]:  # the first label is printing meanwhile: prepare all the others now
-        _prepare(ctx)
+    if b["rows"]:  # labels already handed over are printing meanwhile: hand over the next few
+        _prepare(ctx, limit=3)
         st.rerun()
     rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
     states = [rows.get(j["job_key"], {}).get("status") for j in b["jobs"]]
@@ -243,6 +272,7 @@ def progress(ctx) -> None:
 
 
 def button(ctx, doc_id: int, *, disabled: bool = False) -> None:
+    background_upkeep(ctx)
     todo = rows_to_print(ctx, doc_id)
     running = bool(st.session_state.get("batch"))
     res = st.session_state.get("batch_result")

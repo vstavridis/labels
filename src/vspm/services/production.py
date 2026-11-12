@@ -142,7 +142,6 @@ class ProductionService:
         self.browser = None
         self.photo_stamper = None  # PhotoStamper, set by build_context
         self.cloud_excel = None  # WorkbookSync (VSPM_EXCEL_MODE=onedrive), set by build_context
-        self.deferred: set[int] = set()  # labels of a series being printed (finish_series writes Excel)
 
     # ---- helpers ------------------------------------------------------------------
     def _m(self, key: str, **kw) -> str:
@@ -153,10 +152,13 @@ class ProductionService:
         return self._clock().astimezone(self.tz)
 
     def install_id(self) -> str:
+        if getattr(self, "_install_id", None):
+            return self._install_id
         v = self.db.get_setting("install_id")
         if not v:
             v = uuid.uuid4().hex[:12]
             self.db.set_setting("install_id", v)
+        self._install_id = v
         return v
 
     def barcode_key(self, row_id: int) -> str:
@@ -194,6 +196,9 @@ class ProductionService:
         label = self.repo.label_for_row(row_id) if row is not None else None
         if row is None or (label is not None and label["first_printed_at"]):
             return {"row": "already printed or deleted"}
+        if row.approved and row.status == RowStatus.approved and not row.template_needs_confirmation \
+                and "uncertain" not in row.flags.values():
+            return {}  # already confirmed: nothing to write
         row.flags = {k: v for k, v in row.flags.items() if v != "uncertain"}
         row.template_needs_confirmation = False
         errors = validate_row(self._effective(row))
@@ -408,10 +413,7 @@ class ProductionService:
             except Exception as e:  # registry bookkeeping only
                 log.warning("Could not mark reservation printed: %s", e)
         lab = self.repo.get_label(lid)
-        deferred = lid in self.deferred
-        if lab["excel_status"] == ExcelStatus.not_queued.value and deferred:
-            self._queue_excel(lab, op)  # written once for the whole series (finish_series)
-        elif lab["excel_status"] == ExcelStatus.not_queued.value:
+        if lab["excel_status"] == ExcelStatus.not_queued.value:
             self._queue_excel(lab, op)
             if self.s.excel_mode == ExcelMode.onedrive and self.cloud_excel is not None \
                     and self.s.excel_background_sync and self.cloud_excel.production_enabled():
@@ -421,42 +423,22 @@ class ProductionService:
                 msgs.append(self._m("excel_background"))
             else:
                 msgs.extend(self.sync_excel(lid, operator=op))
-        if first_success and self.photo_stamper is not None and not deferred:
+        if first_success and self.photo_stamper is not None:
             self.photo_stamper.request_for_row(lab["production_row_id"])  # background, never blocks printing
         lab = self.repo.get_label(lid)
         return Outcome(lid, lab["barcode"], lab["print_status"], lab["excel_status"], msgs, True)
 
-    # ---- a series of labels («Print DYMO / Excel») ----------------------------------------------
-    def defer(self, label_ids) -> None:
-        """While a series is printing, its labels' Excel rows and the barcodes on the scan are not
-        written label by label: finish_series() does it once for all of them."""
-        self.deferred.update(label_ids)
-
-    def finish_series(self, label_ids, operator: Optional[str] = None) -> list[str]:
+    # ---- background work left over (restart, closed page) -------------------------------------
+    def catch_up(self, operator: Optional[str] = None) -> None:
+        """Start the background writers for Excel rows still waiting and scans not stamped yet."""
         op, _ = self._who(operator)
-        ids = [i for i in label_ids]
-        self.deferred.difference_update(ids)
-        labels = [lab for lab in (self.repo.get_label(i) for i in ids) if lab is not None]
-        waiting = [lab for lab in labels if lab["first_printed_at"] and lab["excel_status"] == ExcelStatus.pending.value]
-        msgs: list[str] = []
-        if waiting:
-            if self.s.excel_mode == ExcelMode.onedrive and self.cloud_excel is not None \
-                    and self.s.excel_background_sync and self.cloud_excel.production_enabled():
-                self.cloud_excel.request_sync(op)  # one download / upload for all the rows
-                msgs.append(self._m("excel_background"))
-            else:
-                for lab in waiting:
-                    msgs.extend(self.sync_excel(lab["id"], operator=op))
+        if self.s.excel_mode == ExcelMode.onedrive and self.cloud_excel is not None \
+                and self.s.excel_background_sync and self.cloud_excel.production_enabled() \
+                and self.db.one("SELECT 1 FROM labels WHERE first_printed_at IS NOT NULL AND excel_status IN "
+                                "('pending','staged','error') LIMIT 1") is not None:
+            self.cloud_excel.request_sync(op)
         if self.photo_stamper is not None:
-            docs: dict[int, int] = {}
-            for lab in labels:
-                if lab["first_printed_at"]:
-                    row = self.repo.get_row(lab["production_row_id"])
-                    if row is not None and row.document_id is not None:
-                        docs.setdefault(row.document_id, row.id)
-            for row_id in docs.values():  # the scan is stamped once with all its barcodes
-                self.photo_stamper.request_for_row(row_id)
-        return msgs
+            self.photo_stamper.catch_up()
 
     # ---- browser printing (the employee's own PC prints) ----------------------------------
     def _check_station(self, station_id: Optional[str], printer: Optional[str]) -> None:

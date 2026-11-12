@@ -72,10 +72,10 @@ def test_fill_button_saves_the_rows(env):
     saved = ctx.repo.rows_for_document(doc)
     assert len(saved) == len(rows) and {r.customer_full for r in saved} == {"ΚΑΡΑΜΑΥΡΟΥΔΗΣ"}
     assert {r.customer_short for r in saved} == {"ΚΑΡΑΜΑΥΡΟΥΔΗΣ"}  # one customer value
-    assert not any(b.label.startswith("⬇ ΠΕΛΑΤΗΣ") for b in at.button)  # nothing left to fill
 
 
-def test_table_changes_are_saved_without_a_button(env):
+
+def test_table_changes_are_saved_with_label_and_print(env):
     from vspm.services.context import build_context
     ctx = build_context(env)
     doc = ctx.documents.latest(10)[0].doc_id
@@ -92,6 +92,8 @@ def test_table_changes_are_saved_without_a_button(env):
     at.session_state[key] = {"edited_rows": {0: {"weight": "777"}},
                              "added_rows": [], "deleted_rows": []}
     at.run()
+    assert ctx.repo.get_row(first.id).weight != "777"  # editing alone reloads nothing and saves nothing
+    next(b for b in at.button if "Ετικέτα & εκτύπωση" in b.label).click().run()
     assert not at.exception, [e.value for e in at.exception]
     row = ctx.repo.get_row(first.id)
     assert row.weight == "777"
@@ -152,6 +154,7 @@ def test_review_page_of_a_document_without_rows(env):
     at.session_state[key] = {"edited_rows": {}, "added_rows": [{"material": "ΓΑΛΒΑΝΙΖΕ", "weight": "100"}],
                              "deleted_rows": []}
     at.run()
+    next(b for b in at.button if "Ετικέτα & εκτύπωση" in b.label).click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert [r.material for r in ctx.repo.rows_for_document(doc)] == ["ΓΑΛΒΑΝΙΖΕ"]
 
@@ -194,3 +197,20 @@ def test_print_page_sets_the_series_by_itself(env, monkeypatch, tmp_path):
     assert not any("Σειρές barcode" in e.value for e in at.error)  # nothing to set by hand
     assert not next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel")).disabled
     assert {q["series"] for q in ctx.allocator.sequences()} >= {"VS", "PG", "PG0", "EX"}
+
+
+def test_type_in_row_one_then_fill_without_saving_first(env):
+    from vspm.services.context import build_context
+    ctx = build_context(env)
+    doc = ctx.documents.latest(10)[0].doc_id
+    ctx.documents.run_ocr(doc, ctx.ocr_provider())
+    n = len(ctx.repo.rows_for_document(doc))
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
+    at.run()
+    at.session_state[f"editor_{doc}_{n}_0"] = {"edited_rows": {0: {"customer_full": "ΝΕΟΣ ΠΕΛΑΤΗΣ"}},
+                                                "added_rows": [], "deleted_rows": []}
+    next(b for b in at.button if b.label == "⬇ ΠΕΛΑΤΗΣ").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert {r.customer_full for r in ctx.repo.rows_for_document(doc)} == {"ΝΕΟΣ ΠΕΛΑΤΗΣ"}

@@ -88,7 +88,7 @@ class Settings(BaseSettings):
     ocr_openai_model: str = "gpt-5"  # OpenAI vision model with structured outputs (VSPM_OCR_OPENAI_MODEL)
     # Speed of "Read with AI" on OpenAI: less thinking and a smaller picture answer in seconds instead of
     # a minute or more; uncertain values are still marked ⚠ for the operator (VSPM_OCR_OPENAI_EFFORT).
-    ocr_openai_effort: str = "low"
+    ocr_openai_effort: str = "minimal"
     # OneDrive workbook: rows are written by a background thread right after printing (False: during the click)
     excel_background_sync: bool = True
     ocr_image_max_side: int = 1600  # longest side in pixels of the picture sent to the AI
@@ -184,8 +184,8 @@ class Settings(BaseSettings):
     @field_validator("ocr_effort", "ocr_openai_effort")
     @classmethod
     def _effort(cls, v: str) -> str:
-        if v not in {"low", "medium", "high", "xhigh", "max"}:
-            raise ValueError("ocr_effort must be low|medium|high|xhigh|max")
+        if v not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+            raise ValueError("ocr_effort must be minimal|low|medium|high|xhigh|max")
         return v
 
     # ---- helpers -----------------------------------------------------------

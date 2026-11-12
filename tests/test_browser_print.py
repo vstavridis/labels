@@ -283,23 +283,36 @@ def test_customer_on_label_and_excel_is_the_customer_as_entered(ctx, settings):
 
 
 # ---- a series («Εκτύπωση DYMO / Excel») ---------------------------------------------------------
-def test_series_writes_excel_and_stamps_once_at_the_end(ctx, settings):
+def test_each_printed_label_goes_to_excel_and_the_scan_without_waiting_for_the_page(ctx, settings):
+    """Excel and the scan stamp do not depend on the print page staying open until the series ends."""
     verify_station(ctx)
     calls = []
     ctx.production.photo_stamper = type("S", (), {"request_for_row": lambda self, rid: calls.append(rid)})()
     rids = [make_row(ctx, row_index=i, weight=str(490 + i)) for i in (1, 2, 3)]
     jobs = [start(ctx, rid) for rid in rids]
-    ctx.production.defer([j.label_id for j in jobs])
     for j in jobs:
         report(ctx, j)
-        lab = ctx.repo.get_label(j.label_id)
-        assert lab["first_printed_at"] and lab["excel_status"] == "pending"  # not written label by label
-    assert calls == [] and excel_rows(settings, jobs[0].barcode) == []
-    ctx.production.finish_series([j.label_id for j in jobs], "tester")
     for j in jobs:
         assert ctx.repo.get_label(j.label_id)["excel_status"] == "synchronized"
         assert len(excel_rows(settings, j.barcode)) == 1
-    assert ctx.production.deferred == set()
+    assert sorted(calls) == sorted(rids)
+
+
+def test_stamps_of_one_sheet_are_written_together(ctx):
+    from vspm.services.photo_stamp import PhotoStamper
+    done = []
+    st = PhotoStamper(ctx.db, ctx.repo, None, True)
+    st.available = lambda: True
+    st._safe = lambda doc_id: done.append(doc_id)
+    for _ in range(5):
+        st.request_document(7, delay=0.2)
+    st.request_document(8, delay=0.2)
+    import time
+    for _ in range(50):
+        if not st._worker:
+            break
+        time.sleep(0.05)
+    assert sorted(done) == [7, 8]  # five labels of sheet 7 -> one stamp
 
 
 def test_label_sent_after_the_series_was_stopped_is_not_lost(ctx):
