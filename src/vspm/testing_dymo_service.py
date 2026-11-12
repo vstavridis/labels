@@ -177,6 +177,25 @@ def self_signed_cert(directory: Path) -> tuple[Path, Path]:
     return cert_p, key_p
 
 
+class _TlsThreadingServer(ThreadingHTTPServer):
+    """TLS handshake in each connection's own thread: a browser connection that never completes its
+    handshake (e.g. a speculative pre-connect) must not block the other requests."""
+
+    daemon_threads = True
+
+    def __init__(self, addr, handler, ctx: ssl.SSLContext):
+        super().__init__(addr, handler)
+        self.ctx = ctx
+
+    def finish_request(self, request, client_address):
+        request.settimeout(15)
+        try:
+            request = self.ctx.wrap_socket(request, server_side=True)
+        except (OSError, ssl.SSLError):
+            return
+        super().finish_request(request, client_address)
+
+
 class FakeDymoService:
     def __init__(self, port: int = 41951, host: str = "127.0.0.1", cors: bool = True):
         self.state = FakeState()
@@ -184,10 +203,9 @@ class FakeDymoService:
         self._dir = Path(tempfile.mkdtemp(prefix="fake-dymo-"))
         cert, key = self_signed_cert(self._dir)
         self.cert_path = cert
-        self.server = ThreadingHTTPServer((host, port), make_handler(self.state, cors))
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.load_cert_chain(str(cert), str(key))
-        self.server.socket = ctx.wrap_socket(self.server.socket, server_side=True)
+        self.server = _TlsThreadingServer((host, port), make_handler(self.state, cors), ctx)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
 
     def start(self) -> "FakeDymoService":

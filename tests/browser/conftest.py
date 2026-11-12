@@ -173,6 +173,12 @@ def pytest_runtest_makereport(item, call):
                     out.append(f"errors: {page.locator('[data-testid=\"stException\"]').all_inner_texts()}")
                     out.append(f"alerts: {page.locator('[data-testid=\"stAlert\"]').all_inner_texts()[:10]}")
                     out.append(page.locator("body").inner_text()[:2500])
+                    for f in page.frames:
+                        if "vspm_dymo_bridge" in f.url:
+                            root = f.locator("#root")
+                            out.append("bridge: queue=%s running=%s halted=%s | %s" % (
+                                root.get_attribute("data-queue"), root.get_attribute("data-running"),
+                                root.get_attribute("data-halted"), root.inner_text()[:600].replace("\n", " / ")))
             except Exception as e:  # context already closed
                 out.append(f"(page not readable: {e})")
         if _SERVER_LOG and _SERVER_LOG[0].exists():

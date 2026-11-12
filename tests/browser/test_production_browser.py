@@ -136,6 +136,10 @@ def test_print_all_labels_of_the_document_one_after_the_other(browser, app_serve
     httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
     # Open the print page directly (new page load = new session, as when the operator opens the app there):
     # the button must become active as soon as the browser reported this verified PC, without leaving the page.
+    import os
+    if os.environ.get("VSPM_TEST_SLOW_BROWSER"):  # emulate a slow PC (CPU throttling)
+        page.context.new_cdp_session(page).send("Emulation.setCPUThrottlingRate",
+                                                {"rate": int(os.environ["VSPM_TEST_SLOW_BROWSER"])})
     goto_app(page, app_server["url"] + "/print")
     btn = page.get_by_role("button", name=re.compile("Εκτύπωση DYMO.*\\(3\\)"))
     btn.wait_for()

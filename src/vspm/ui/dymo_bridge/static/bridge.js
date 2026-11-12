@@ -375,7 +375,6 @@ const inFlight = {};
 // between. The first one that is not sent (no printer, failure, check refused) halts the series: the
 // next ones are not printed until the operator acts ("Try again" for a label that was not sent).
 let queue = [];
-const queued = {};
 let running = null;
 let halted = null;
 async function runQueue() {
@@ -601,6 +600,9 @@ function render() {
         row.appendChild(inp);
         root.appendChild(row);
     }
+    root.setAttribute("data-queue", String(queue.length));
+    root.setAttribute("data-running", running ? running.expected_barcode : "");
+    root.setAttribute("data-halted", halted ? halted.expected_barcode : "");
     if (currentJobView) {
         const j = currentJobView;
         const box = el("div", { class: "job " + j.state, "data-testid": "job-status", "data-state": j.state });
@@ -675,22 +677,25 @@ async function onRender(event) {
     queue = queue.filter((j) => wanted[j.job_key] || (running !== null && running.job_key === j.job_key));
     if (halted && !wanted[halted.job_key])
         halted = null;
-    let added = false;
     for (const j of jobs) {
-        if (!queued[j.job_key]) {
-            queued[j.job_key] = true;
-            queue.push(j);
-            added = true;
+        const key = j.job_key;
+        if (queue.some((q) => q.job_key === key) || (running !== null && running.job_key === key))
+            continue;
+        const prev = store.get("job." + key, null);
+        if (prev && ["submitted", "failed", "rejected", "uncertain"].indexOf(prev.status) >= 0) {
+            // finished in this browser: make sure the server gets the result (never print it again)
+            if (prev.result && !outbox().some((r) => r.job_key === key) && args.acked.indexOf(key) < 0)
+                pushResult(prev.result);
+            continue;
         }
+        queue.push(j);
     }
-    if (added && !running && !halted) {
-        if (!queue.some((j) => currentJobView && currentJobView.job.job_key === j.job_key))
-            currentJobView = null;
+    if (!jobs.length && !running && !halted)
+        currentJobView = null;
+    if (queue.length && !running && !halted) {
         await runQueue();
         return;
     }
-    if (!jobs.length && !running)
-        currentJobView = null;
     flush();
 }
 window.addEventListener("message", (e) => { void onRender(e); });
