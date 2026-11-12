@@ -55,7 +55,7 @@ vspm-registry = "vspm_registry.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-"vspm" = ["db/migrations/*.sql"]
+"vspm" = ["db/migrations/*.sql", "ui/dymo_bridge/static/*", "ui/dymo_bridge/static/vendor/*", "ui/row_grid/static/*"]
 "vspm_registry" = ["migrations/*.sql", "static/*.html"]
 
 [tool.pytest.ini_options]

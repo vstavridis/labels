@@ -298,9 +298,9 @@ def button(ctx, doc_id: int, *, disabled: bool = False) -> None:
               disabled=disabled or running or bool(missing), help=T("print_all_help", n=len(todo)), on_click=start, args=(ctx, doc_id))
 
 
-def _stamp_now(ctx, doc_id: int) -> None:
+def _stamp_now(ctx, doc_id: int, force: bool = False) -> None:
     try:
-        res = ctx.stamper.stamp_document(doc_id, operator())
+        res = ctx.stamper.stamp_document(doc_id, operator(), force=force)
         flash("success", T("stamp_done", m=res))
     except Exception as e:  # noqa: BLE001 - shown to the operator
         flash("error", T("stamp_failed", e=e))
@@ -317,7 +317,12 @@ def stamp_status(ctx, doc_id: int) -> None:
     rec = stamper.record(doc_id)
     import json
     if rec is not None and rec["status"] == "done" and json.loads(rec["barcodes_json"]) == [list(e) for e in printed]:
-        st.caption("🖼️ " + T("stamp_ok", n=len(printed)))
+        if rec["mode"] == "cells":
+            st.caption("🖼️ " + T("stamp_ok", n=len(printed)))
+            return
+        # an older version listed them under the photo: offer to write them into the BARCODE cells
+        st.caption("🖼️ " + T("stamp_strip"))
+        st.button("🖼️ " + T("stamp_redo"), key=f"stamp_redo_{doc_id}", on_click=_stamp_now, args=(ctx, doc_id, True))
         return
     if rec is not None and rec["status"] == "error":
         st.warning("🖼️ " + T("stamp_failed", e=rec["error"]))

@@ -75,7 +75,8 @@ jobs:
         run: |
           for f in src/vspm/ui/app.py requirements.txt .streamlit/config.toml \
                    src/vspm/ui/dymo_bridge/static/index.html src/vspm/ui/dymo_bridge/static/bridge.js \
-                   src/vspm/ui/dymo_bridge/static/vendor/dymo.connect.framework.js; do
+                   src/vspm/ui/dymo_bridge/static/vendor/dymo.connect.framework.js \
+                   src/vspm/ui/row_grid/static/index.html src/vspm/ui/row_grid/static/grid.js; do
             test -f "$f" || { echo "missing: $f"; exit 1; }
           done
       - run: pip install -r requirements.txt playwright

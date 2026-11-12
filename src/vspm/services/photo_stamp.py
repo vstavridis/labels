@@ -115,9 +115,11 @@ class PhotoStamper:
         except Exception as e:  # noqa: BLE001 - recorded, shown in Settings, never breaks printing
             log.warning("Stamping document %s failed: %s", doc_id, e)
 
-    def stamp_document(self, doc_id: int, user: str) -> str:
+    def stamp_document(self, doc_id: int, user: str, force: bool = False) -> str:
+        """force: draw again even if the same barcodes are already on the photo (e.g. a list under the
+        photo from an older version that did not find the BARCODE column)."""
         with self._lock:
-            return self._stamp(doc_id, user)
+            return self._stamp(doc_id, user, force)
 
     def _set(self, doc_id: int, file_id: str, **fields) -> None:
         with self.db.transaction() as conn:
@@ -127,7 +129,7 @@ class PhotoStamper:
             sets = ", ".join(f"{k}=?" for k in fields)
             conn.execute(f"UPDATE document_stamps SET {sets} WHERE document_id=?", (*fields.values(), doc_id))
 
-    def _stamp(self, doc_id: int, user: str) -> str:
+    def _stamp(self, doc_id: int, user: str, force: bool = False) -> str:
         doc = self.repo.get_document(doc_id)
         if doc is None or doc["source"] != "google":
             return "skipped"
@@ -147,7 +149,8 @@ class PhotoStamper:
                 rec = self.record(doc_id)
             elif meta.get("md5Checksum") not in (rec["original_md5"], rec["stamped_md5"]):
                 raise DocumentSourceError("the scan was replaced in Google Drive (re-scanned?) - not overwritten")
-            if rec["status"] == "done" and json.loads(rec["barcodes_json"]) == [list(e) for e in entries] \
+            if not force and rec["status"] == "done" and \
+                    json.loads(rec["barcodes_json"]) == [list(e) for e in entries] \
                     and meta.get("md5Checksum") == rec["stamped_md5"]:
                 return "done"
             original = self.source.download_revision(file_id, rec["original_revision_id"])

@@ -238,3 +238,25 @@ def test_download_fallback_contains_reserved_barcode(browser, app_server, dymo_r
     assert len(excel_rows(app_ctx, barcode)) == 1
     assert jobs() == []  # nothing went through the browser bridge
     ctx.close()
+
+
+def test_review_table_fill_in_the_browser_saved_with_label_and_print(browser, app_server, dymo_reset, app_ctx):
+    doc, rid = make_document_row(app_ctx, weight="700", rows=3)
+    ctx, page = new_page(browser, app_server, allow_local_network=True)
+    goto_app(page, app_server["url"] + "/review")
+    grid = page.frame_locator('iframe[title*="vspm_row_grid"]').first
+    first = grid.locator('input[data-row="0"][data-col="customer_full"]')
+    first.wait_for()
+    first.fill("ΒΗΤΑ ΑΕ")
+    grid.locator('button[data-fill="customer_full"]').click()  # ⬇ next to row 1's value
+    for i in (1, 2):
+        assert grid.locator(f'input[data-row="{i}"][data-col="customer_full"]').input_value() == "ΒΗΤΑ ΑΕ"
+    # nothing saved yet: typing and ⬇ stay in the browser
+    assert {r.customer_full for r in app_ctx.repo.rows_for_document(doc)} == {"ΑΛΦΑΔΗΣ"}
+    grid.locator('[data-testid="grid-save"]').click()
+    for _ in range(60):
+        if {r.customer_full for r in app_ctx.repo.rows_for_document(doc)} == {"ΒΗΤΑ ΑΕ"}:
+            break
+        page.wait_for_timeout(500)
+    assert {r.customer_full for r in app_ctx.repo.rows_for_document(doc)} == {"ΒΗΤΑ ΑΕ"}
+    ctx.close()

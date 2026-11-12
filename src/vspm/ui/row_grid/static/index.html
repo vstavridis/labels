@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="el">
+<head>
+<meta charset="utf-8">
+<title>VSPM rows</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1d2330; --line: #d6dae1; --head: #f3f5f8; --dis: #f1f2f4; --warn: #b26b00;
+          --accent: #ff4b4b; --input: #ffffff; }
+  body.dark { --bg: #0e1117; --fg: #e6e8ec; --line: #3a3f4b; --head: #1a1d24; --dis: #20232b; --warn: #f0b05a;
+              --input: #161a22; }
+  body { margin: 0; padding: 0 2px 4px; background: var(--bg); color: var(--fg);
+         font-family: "Source Sans Pro", "Segoe UI", Arial, sans-serif; font-size: 14px; }
+  .wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 8px; }
+  table { border-collapse: collapse; width: 100%; }
+  th, td { border-bottom: 1px solid var(--line); padding: 2px 3px; white-space: nowrap; text-align: left; }
+  th { background: var(--head); font-weight: 600; font-size: 13px; padding: 6px 4px; position: sticky; top: 0; }
+  td.num { color: #8a909c; width: 26px; text-align: right; }
+  td.flags { color: var(--warn); font-size: 12px; max-width: 170px; overflow: hidden; text-overflow: ellipsis; }
+  .cell { display: flex; align-items: center; gap: 2px; }
+  input, select { width: 100%; min-width: 60px; box-sizing: border-box; font-size: 14px; padding: 4px 5px;
+                  border: 1px solid transparent; border-radius: 4px; background: var(--input); color: var(--fg); }
+  input:focus, select:focus { outline: none; border-color: var(--accent); }
+  tr.printed input, tr.printed select { background: var(--dis); color: #8a909c; }
+  button { white-space: nowrap; font-size: 13px; border: 1px solid var(--line); background: var(--head); color: var(--fg);
+           border-radius: 5px; cursor: pointer; padding: 3px 7px; }
+  button.fill { padding: 2px 5px; font-size: 12px; flex: none; }
+  button.fill:hover { border-color: var(--accent); color: var(--accent); }
+  button.del { border: none; background: none; color: #8a909c; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-size: 15px;
+                   padding: 8px 14px; width: 100%; margin-top: 8px; font-weight: 600; }
+  .bar { display: flex; gap: 8px; align-items: center; margin-top: 6px; font-size: 13px; color: #8a909c; }
+  .changed { color: var(--warn); font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script src="grid.js"></script>
+</body>
+</html>

@@ -16,6 +16,28 @@ if __package__ in (None, ""):  # launched by `streamlit run path/to/app.py`
 
 import streamlit as st
 
+# A new version pushed to GitHub: Streamlit Cloud pulls the files but reloads only the page modules -
+# the rest of the package (printing, Excel, photo stamping) would keep running the OLD code until a
+# reboot. When any source file changed, drop every loaded vspm module and the cached services so the
+# whole app runs the new version.
+_SRC = Path(__file__).resolve().parents[2]
+
+
+def _code_version() -> float:
+    try:
+        return max(p.stat().st_mtime for d in ("vspm", "vspm_registry") for p in (_SRC / d).rglob("*.py"))
+    except (OSError, ValueError):
+        return 0.0
+
+
+_version = _code_version()
+if getattr(sys, "_vspm_code_version", None) not in (None, _version):
+    for _name in [n for n in sys.modules if n == "vspm" or n.startswith(("vspm.", "vspm_registry"))]:
+        del sys.modules[_name]
+    st.cache_resource.clear()
+    st.cache_data.clear()
+sys._vspm_code_version = _version  # type: ignore[attr-defined]
+
 st.set_page_config(page_title="VS Production Manager", page_icon="🏷️", layout="wide")
 
 from vspm.ui import auth  # noqa: E402

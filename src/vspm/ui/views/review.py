@@ -9,6 +9,7 @@ import streamlit as st
 
 from vspm.domain.models import ProductionRow, RowStatus, TemplateKey
 from vspm.ui.common import S, T, flash, get_context, show_document, show_flash
+from vspm.ui.row_grid import row_grid
 from vspm.ui.views.recognition import doc_selector
 
 FIELDS = [
@@ -192,68 +193,43 @@ def render() -> None:
         return
     rows = ctx.repo.rows_for_document(doc_id)
     en = st.session_state["lang"] == "en"
-    left, right = st.columns([3, 5])
+    left, right = st.columns([2, 5])
     with left:
         show_document(doc_id)
     with right:
         st.caption(T("review_help"))
         original = to_frame(ctx, rows)
-        colcfg = {
-            "id": None,
-            "#": st.column_config.NumberColumn("#", width="small", disabled=True),
-            "template": st.column_config.SelectboxColumn(T("template"), options=[k.value for k in TemplateKey],
-                                                         width="small"),
-            "flags": st.column_config.TextColumn("⚠", disabled=True),
-            "status": st.column_config.TextColumn(T("status"), disabled=True),
-            "barcode": st.column_config.TextColumn(T("barcode"), disabled=True),
-        }
         same = getattr(ctx.customers, "label_same_as_full", False)
-        for f, el, eng in FIELDS:
-            colcfg[f] = st.column_config.TextColumn(eng if en else el)
-        if same:  # one customer value: printed on the label and written to Excel F as entered
-            colcfg["customer_full"] = st.column_config.TextColumn("Customer" if en else "ΠΕΛΑΤΗΣ")
-            colcfg["customer_short"] = None
-        ver = st.session_state.get("editor_ver", 0)
         names = {f: (eng if en else el) for f, el, eng in FIELDS}
         names["template"] = T("template")
-        if same:
+        if same:  # one customer value: printed on the label and written to Excel F as entered
             names["customer_full"] = "Customer" if en else "ΠΕΛΑΤΗΣ"
-        # A form: editing the table does not reload the page cell by cell (that was slow). The changes are
-        # saved once, with «Ετικέτα & εκτύπωση» or a Fill button.
-        with st.form(f"review_{doc_id}_{ver}", border=False):
-            order = [c for c in original.columns if c in FILL_COLUMNS]
-            st.caption(T("fill_help"))
-            fill_clicked = None
-            per_row = 6
-            for start in range(0, len(order), per_row):
-                cols = st.columns(per_row)
-                for i, col in enumerate(order[start:start + per_row]):
-                    if cols[i].form_submit_button(f"⬇ {names[col]}", key=f"fill_{col}", width="stretch",
-                                                  help=T("fill_one_help", c=names[col])):
-                        fill_clicked = col
-            edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
-                                    width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
-            st.caption("✔ " + T("autosaved"))
-            go = st.form_submit_button("🖨️ " + T("nav_print"), type="primary", width="stretch")
-        # With no rows the editor can return a frame without the hidden columns (id, #): put them back.
-        edited = edited.reindex(columns=list(original.columns))
-        if fill_clicked:
-            filled, n = fill_down(edited, fill_clicked)
-            msgs = apply_changes(ctx, doc_id, original, filled)
-            if fill_clicked == "template":  # choosing the type for all rows is the operator's confirmation
-                value = _s(filled.sort_values("#").iloc[0]["template"]) if len(filled) else ""
-                for r in ctx.repo.rows_for_document(doc_id):
-                    if r.label_id is None and r.template_key and r.template_key.value == value \
-                            and r.template_needs_confirmation:
-                        r.template_needs_confirmation = False
-                        r.flags.pop("template_key", None)
-                        ctx.repo.save_row(r)
-            for m in msgs:
-                flash("warning", m)
-            flash("success", T("filled", n=n, c=names[fill_clicked]))
-            st.session_state["editor_ver"] = ver + 1
-            st.rerun()
-        if go:
+        keys = ["template"] + [f for f, _, _ in FIELDS if not (same and f == "customer_short")]
+        widths = {"template": 70, "customer_full": 150, "material": 160, "thickness": 60, "dimensions": 110,
+                  "weight": 60, "pieces": 60, "packages": 50, "source_roll": 90, "location": 110,
+                  "document_date": 95, "customer_short": 120}
+        columns = [{"key": k, "label": names[k], "fill": k in FILL_COLUMNS, "width": widths.get(k, 80),
+                    **({"options": [t.value for t in TemplateKey]} if k == "template" else {})} for k in keys]
+        grid_rows = []
+        for rec in original.to_dict("records"):
+            item = {k: _s(rec.get(k)) for k in keys}
+            item.update({"id": int(rec["id"]), "#": int(rec["#"]), "flags": _s(rec.get("flags")),
+                         "barcode": _s(rec.get("barcode")), "printed": bool(_s(rec.get("barcode")))})
+            grid_rows.append(item)
+        ver = st.session_state.get("editor_ver", 0)
+        version = f"{doc_id}:{ver}:{len(rows)}"
+        texts = {"save": "🖨️ " + T("nav_print"), "add": T("grid_add"), "delete": T("grid_delete"),
+                 "fill_tip": T("fill_one_help", c="").strip(), "unsaved": T("grid_unsaved"),
+                 "saved_hint": T("autosaved"), "barcode": T("barcode")}
+        value = row_grid(grid_rows, columns, texts=texts, version=version, key=f"grid_{doc_id}")
+        done = st.session_state.get("grid_done")
+        if value and value.get("action") == "save" and value.get("version") == version \
+                and done != (version, value.get("click")):
+            st.session_state["grid_done"] = (version, value.get("click"))
+            edited = pd.DataFrame([{**{c: r.get(c) for c in keys}, "id": r.get("id"), "#": r.get("#")}
+                                   for r in value.get("rows", [])], columns=list(original.columns)) \
+                if value.get("rows") else original.iloc[0:0]
+            edited = edited.reindex(columns=list(original.columns))
             if _changed(original, edited):
                 for m in apply_changes(ctx, doc_id, original, edited):
                     flash("warning", m)

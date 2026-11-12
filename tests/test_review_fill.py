@@ -52,27 +52,44 @@ review.render()
 """
 
 
-def test_fill_button_saves_the_rows(env):
+def grid_save(at, doc: int, rows: list[dict], version: str, click: int = 1) -> None:
+    """What the browser table sends when «Ετικέτα & εκτύπωση» is pressed."""
+    at.session_state[f"grid_{doc}"] = {"action": "save", "click": click, "version": version, "deleted": [],
+                                        "rows": rows}
+    at.run()
+
+
+def grid_rows(ctx, doc) -> list[dict]:
+    from vspm.ui.views.review import FIELDS
+    out = []
+    for r in ctx.repo.rows_for_document(doc):
+        d = {f: getattr(r, f) or "" for f, _, _ in FIELDS}
+        d.update({"id": r.id, "#": r.row_index, "template": r.template_key.value if r.template_key else "",
+                  "printed": False})
+        out.append(d)
+    return out
+
+
+def test_filled_table_is_saved_with_label_and_print(env):
     from vspm.services.context import build_context
     ctx = build_context(env)
     doc = ctx.documents.latest(10)[0].doc_id
-    rows = ctx.documents.run_ocr(doc, ctx.ocr_provider())
-    for i, r in enumerate(ctx.repo.rows_for_document(doc)):
-        r.customer_full = "ΚΑΡΑΜΑΥΡΟΥΔΗΣ" if i == 0 else ""
-        r.customer_short = r.customer_full
-        ctx.repo.save_row(r)
+    ctx.documents.run_ocr(doc, ctx.ocr_provider())
     from vspm.ui.common import get_context
     get_context.clear()
     at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    btn = next(b for b in at.button if b.label.startswith("⬇ ΠΕΛΑΤΗΣ"))
-    btn.click().run()
+    rows = grid_rows(ctx, doc)
+    for r in rows:  # ⬇ on the customer column (done in the browser)
+        r["customer_full"] = "ΚΑΡΑΜΑΥΡΟΥΔΗΣ"
+    grid_save(at, doc, rows, f"{doc}:0:{len(rows)}")
     assert not at.exception, [e.value for e in at.exception]
     saved = ctx.repo.rows_for_document(doc)
     assert len(saved) == len(rows) and {r.customer_full for r in saved} == {"ΚΑΡΑΜΑΥΡΟΥΔΗΣ"}
     assert {r.customer_short for r in saved} == {"ΚΑΡΑΜΑΥΡΟΥΔΗΣ"}  # one customer value
-
+    at.run()  # the same value again (rerun) is not saved twice
+    assert not at.exception
 
 
 def test_table_changes_are_saved_with_label_and_print(env):
@@ -84,19 +101,15 @@ def test_table_changes_are_saved_with_label_and_print(env):
     get_context.clear()
     at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
     at.run()
-    assert not any("💾" in b.label for b in at.button)  # no Save button
-    first = ctx.repo.rows_for_document(doc)[0]
-    key = f"editor_{doc}_{len(ctx.repo.rows_for_document(doc))}_0"
     from vspm.ui.views.review import to_frame
     assert "approved" not in to_frame(ctx, ctx.repo.rows_for_document(doc)).columns  # no approval column
-    at.session_state[key] = {"edited_rows": {0: {"weight": "777"}},
-                             "added_rows": [], "deleted_rows": []}
-    at.run()
-    assert ctx.repo.get_row(first.id).weight != "777"  # editing alone reloads nothing and saves nothing
-    next(b for b in at.button if "Ετικέτα & εκτύπωση" in b.label).click().run()
+    rows = grid_rows(ctx, doc)
+    first = rows[0]["id"]
+    rows[0]["weight"] = "777"
+    grid_save(at, doc, rows[:-1], f"{doc}:0:{len(rows)}")  # the last row deleted in the browser
     assert not at.exception, [e.value for e in at.exception]
-    row = ctx.repo.get_row(first.id)
-    assert row.weight == "777"
+    assert ctx.repo.get_row(first).weight == "777"
+    assert len(ctx.repo.rows_for_document(doc)) == len(rows) - 1
 
 
 PRINT_PAGE = """
@@ -150,11 +163,8 @@ def test_review_page_of_a_document_without_rows(env):
     at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    key = f"editor_{doc}_0_0"  # the operator adds a row by hand
-    at.session_state[key] = {"edited_rows": {}, "added_rows": [{"material": "ΓΑΛΒΑΝΙΖΕ", "weight": "100"}],
-                             "deleted_rows": []}
-    at.run()
-    next(b for b in at.button if "Ετικέτα & εκτύπωση" in b.label).click().run()
+    new = {"id": None, "#": None, "printed": False, "template": "", "material": "ΓΑΛΒΑΝΙΖΕ", "weight": "100"}
+    grid_save(at, doc, [new], f"{doc}:0:0")  # a row added by hand
     assert not at.exception, [e.value for e in at.exception]
     assert [r.material for r in ctx.repo.rows_for_document(doc)] == ["ΓΑΛΒΑΝΙΖΕ"]
 
@@ -197,20 +207,3 @@ def test_print_page_sets_the_series_by_itself(env, monkeypatch, tmp_path):
     assert not any("Σειρές barcode" in e.value for e in at.error)  # nothing to set by hand
     assert not next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel")).disabled
     assert {q["series"] for q in ctx.allocator.sequences()} >= {"VS", "PG", "PG0", "EX"}
-
-
-def test_type_in_row_one_then_fill_without_saving_first(env):
-    from vspm.services.context import build_context
-    ctx = build_context(env)
-    doc = ctx.documents.latest(10)[0].doc_id
-    ctx.documents.run_ocr(doc, ctx.ocr_provider())
-    n = len(ctx.repo.rows_for_document(doc))
-    from vspm.ui.common import get_context
-    get_context.clear()
-    at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
-    at.run()
-    at.session_state[f"editor_{doc}_{n}_0"] = {"edited_rows": {0: {"customer_full": "ΝΕΟΣ ΠΕΛΑΤΗΣ"}},
-                                                "added_rows": [], "deleted_rows": []}
-    next(b for b in at.button if b.label == "⬇ ΠΕΛΑΤΗΣ").click().run()
-    assert not at.exception, [e.value for e in at.exception]
-    assert {r.customer_full for r in ctx.repo.rows_for_document(doc)} == {"ΝΕΟΣ ΠΕΛΑΤΗΣ"}
