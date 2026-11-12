@@ -151,7 +151,14 @@ def test_print_all_labels_of_the_document_one_after_the_other(browser, app_serve
     import time
     t0 = time.time()
     btn.click()
-    page.get_by_text("Τέλος: τυπώθηκαν 3 από 3").first.wait_for(timeout=90000)
+    try:
+        page.get_by_text("Τέλος: τυπώθηκαν 3 από 3").first.wait_for(timeout=90000)
+    except Exception:
+        print("JOBS", [(j["barcode"], j["status"], j["error"]) for j in app_ctx.db.query(
+            "SELECT barcode, status, error FROM print_jobs ORDER BY id")])
+        print("LABELS", [(r["barcode"], r["print_status"]) for r in app_ctx.db.query(
+            "SELECT barcode, print_status FROM labels ORDER BY id")])
+        raise
     print(f"series of 3 labels: {time.time() - t0:.1f} s")
     rows = app_ctx.repo.rows_for_document(doc)
     labels = [app_ctx.repo.label_for_row(r.id) for r in rows]

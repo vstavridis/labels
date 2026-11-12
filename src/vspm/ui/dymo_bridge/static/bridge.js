@@ -375,6 +375,9 @@ const inFlight = {};
 // between. The first one that is not sent (no printer, failure, check refused) halts the series: the
 // next ones are not printed until the operator acts ("Try again" for a label that was not sent).
 let queue = [];
+const trace = []; // last events, shown as data-trace (diagnostics of the browser tests)
+function note(t) { trace.push(t); if (trace.length > 30)
+    trace.shift(); }
 let running = null;
 let halted = null;
 async function runQueue() {
@@ -384,9 +387,11 @@ async function runQueue() {
         while (queue.length && !halted) {
             const job = queue[0];
             running = job;
+            note("run:" + job.expected_barcode);
             await runJob(job, false);
             running = null;
             const state = currentJobView && currentJobView.job.job_key === job.job_key ? currentJobView.state : "";
+            note("end:" + job.expected_barcode + ":" + state);
             if (state === "submitted")
                 queue.shift();
             else
@@ -603,6 +608,7 @@ function render() {
     root.setAttribute("data-queue", String(queue.length));
     root.setAttribute("data-running", running ? running.expected_barcode : "");
     root.setAttribute("data-halted", halted ? halted.expected_barcode : "");
+    root.setAttribute("data-trace", trace.join(" "));
     if (currentJobView) {
         const j = currentJobView;
         const box = el("div", { class: "job " + j.state, "data-testid": "job-status", "data-state": j.state });
@@ -670,6 +676,7 @@ async function onRender(event) {
         await detect();
     }
     const jobs = args.jobs.length ? args.jobs : (args.job ? [args.job] : []);
+    note("render:" + jobs.map((j) => j.expected_barcode).join(","));
     const wanted = {};
     for (const j of jobs)
         wanted[j.job_key] = true;
