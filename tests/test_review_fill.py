@@ -154,3 +154,26 @@ def test_review_page_of_a_document_without_rows(env):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert [r.material for r in ctx.repo.rows_for_document(doc)] == ["ΓΑΛΒΑΝΙΖΕ"]
+
+
+def test_print_page_says_which_barcode_series_is_missing(env, monkeypatch, tmp_path):
+    monkeypatch.setenv("VSPM_BARCODE_MODE", "database")
+    if not env.database_url:
+        monkeypatch.setenv("VSPM_REGISTRY_DATABASE_URL", f"sqlite:///{tmp_path / 'reg.sqlite3'}")
+    from vspm.ui.common import get_context
+    get_context.clear()
+    ctx = get_context()
+    doc = ctx.documents.latest(10)[0].doc_id
+    ctx.documents.run_ocr(doc, ctx.ocr_provider())
+    at = AppTest.from_string(PRINT_PAGE.format(doc=doc), default_timeout=120)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Σειρές barcode" in e.value for e in at.error)  # says what to do, before anything is pressed
+    btn = next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel"))
+    assert btn.disabled
+    prefixes = {ctx.templates.spec(r.template_key).barcode_prefix for r in ctx.repo.rows_for_document(doc)}
+    for p in prefixes:
+        ctx.allocator.set_sequence(p, p, 500, format_width=3, operator="test")
+    at.run()
+    assert not any("Σειρές barcode" in e.value for e in at.error)
+    assert not next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel")).disabled

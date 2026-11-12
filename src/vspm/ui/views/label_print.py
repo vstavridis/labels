@@ -31,9 +31,7 @@ def render() -> None:
                 f"{r.dimensions} · {r.weight} kg" + (f" · {lab['barcode']}" if lab else ""))
 
     browser_mode = ctx.settings.printer_mode.value == "browser"
-    station_ok = not browser_mode or not ctx.settings.require_verified_station or ctx.browser.station_verified(
-        st.session_state.get("station_id"), st.session_state.get("station_printer"))
-    batch_print.button(ctx, doc_id, disabled=not station_ok)
+    top = st.container()  # the Print DYMO / Excel button: filled AFTER the browser said which PC this is
     st.divider()
 
     ids = [r.id for r in rows]
@@ -45,6 +43,10 @@ def render() -> None:
         from vspm.ui.views.browser_actions import bridge_section
         with right:
             bridge_section(ctx)  # first: the browser's report updates the label status shown below
+    with top:
+        station_ok = not browser_mode or not ctx.settings.require_verified_station or ctx.browser.station_verified(
+            st.session_state.get("station_id"), st.session_state.get("station_printer"))
+        batch_print.button(ctx, doc_id, disabled=not station_ok)
     row = ctx.repo.get_row(row_id)
     label = ctx.repo.label_for_row(row_id)
 

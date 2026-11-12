@@ -134,8 +134,17 @@ def test_print_all_labels_of_the_document_one_after_the_other(browser, app_serve
     ctx, page = new_page(browser, app_server, allow_local_network=True)
     verify_this_browser(page, app_server)
     httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
-    open_print_page(page, app_server)
-    page.get_by_role("button", name=re.compile("Εκτύπωση DYMO.*\\(3\\)")).click()
+    # Open the print page directly (new page load = new session, as when the operator opens the app there):
+    # the button must become active as soon as the browser reported this verified PC, without leaving the page.
+    goto_app(page, app_server["url"] + "/print")
+    btn = page.get_by_role("button", name=re.compile("Εκτύπωση DYMO.*\\(3\\)"))
+    btn.wait_for()
+    for _ in range(60):
+        if btn.is_enabled():
+            break
+        page.wait_for_timeout(500)
+    assert btn.is_enabled(), "button still disabled on the first visit of the print page"
+    btn.click()
     page.get_by_text("Τέλος: τυπώθηκαν 3 από 3").first.wait_for(timeout=90000)
     rows = app_ctx.repo.rows_for_document(doc)
     labels = [app_ctx.repo.label_for_row(r.id) for r in rows]

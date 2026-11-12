@@ -47,6 +47,20 @@ STRINGS: dict[str, tuple[str, str]] = {
                       "The label was not sent yet: {e}. Check the DYMO and press Try again in the printer box; the "
                       "series then goes on by itself."),
     "batch_stop": ("Διακοπή σειράς", "Stop the series"),
+    "series_missing": ("Δεν έχει οριστεί ο επόμενος αριθμός barcode για τη σειρά {s}. Ένας admin τον ορίζει στις "
+                       "Ρυθμίσεις → Σειρές barcode (ο ΕΠΟΜΕΝΟΣ ελεύθερος αριθμός, μεγαλύτερος από κάθε ετικέτα {s} "
+                       "που έχει ήδη τυπωθεί).",
+                       "No next barcode number set for series {s}. An admin sets it in Settings → Barcode series "
+                       "(the NEXT free number, higher than every {s} label already printed)."),
+    "print_all_needs_station": ("Ενεργοποιείται όταν αυτός ο υπολογιστής έχει τυπώσει και επιβεβαιώσει το TEST0001 "
+                                "(σελίδα «Εκτυπωτής DYMO»).",
+                                "Available once this PC printed and confirmed TEST0001 (page DYMO printer)."),
+    "series_template_counters": ("Μετρητές όπως είναι αποθηκευμένοι στα αρχεία DYMO (για βοήθεια· ο πραγματικός "
+                                 "τελευταίος αριθμός μπορεί να είναι μεγαλύτερος αν το αρχείο δεν αποθηκεύτηκε μετά "
+                                 "την τελευταία εκτύπωση):",
+                                 "Counters as saved in the DYMO files (a hint: the real last number may be higher if "
+                                 "the file was not saved after the last print):"),
+    "series_not_set": ("δεν έχει οριστεί", "not set"),
     "batch_skipped": ("Γραμμή #{i} δεν τυπώθηκε: {e}", "Row #{i} not printed: {e}"),
     "cloud_sources": ('Πηγές cloud', 'Cloud sources'),
     "cs_intro": ('Τα πρότυπα DYMO και το Σχισμενα.xlsx διαβάζονται από το OneDrive σας, οι σαρώσεις από το Google Drive. Τα αρχικά αρχεία δεν αλλάζουν ποτέ (εκτός από το Excel, μόνο αν ενεργοποιηθεί η αυτόματη εγγραφή).', 'DYMO templates and Σχισμενα.xlsx are read from your OneDrive, scans from Google Drive. Original files are never changed (except the workbook, only if automatic writing is enabled).'),

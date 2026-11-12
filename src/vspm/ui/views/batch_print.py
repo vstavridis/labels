@@ -36,6 +36,22 @@ def rows_to_print(ctx, doc_id: int) -> list:
     return out
 
 
+def missing_series(ctx, rows) -> list[str]:
+    """Barcode series (e.g. PG0) that the rows need but that were never initialised in Settings."""
+    sequences = getattr(ctx.allocator, "sequences", None)
+    if sequences is None:
+        return []
+    try:
+        known = {q["series"] for q in sequences()}
+    except Exception:  # noqa: BLE001 - the print itself reports the registry error
+        return []
+    needed = set()
+    for r in rows:
+        if r.template_key is not None:
+            needed.add(ctx.templates.spec(r.template_key).barcode_prefix)
+    return sorted(needed - known)
+
+
 def _confirm_rows(ctx, rows) -> list[int]:
     ids = []
     for r in rows:
@@ -166,5 +182,10 @@ def button(ctx, doc_id: int, *, disabled: bool = False) -> None:
     elif not todo:
         st.success("✅ " + T("all_printed"))
         return
+    missing = [] if running else missing_series(ctx, todo)
+    if missing:
+        st.error(T("series_missing", s=", ".join(missing)))
+    if not running and disabled and ctx.settings.printer_mode.value == "browser":
+        st.caption(T("print_all_needs_station"))
     st.button(f"🖨️ {T('print_all')} ({len(todo)})", type="primary", width="stretch", key="print_all",
-              disabled=disabled or running, help=T("print_all_help", n=len(todo)), on_click=start, args=(ctx, doc_id))
+              disabled=disabled or running or bool(missing), help=T("print_all_help", n=len(todo)), on_click=start, args=(ctx, doc_id))

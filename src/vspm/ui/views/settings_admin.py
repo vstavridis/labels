@@ -71,6 +71,20 @@ def series_tab(ctx) -> None:
         return
 
     known = {q["series"]: q for q in seqs}
+    hints = []
+    for k in TemplateKey:
+        try:
+            spec = ctx.templates.spec(k)
+            ci = ctx.templates.load(k).counter_info(spec.counter_object) or {}
+        except Exception:  # noqa: BLE001 - template not available yet
+            continue
+        if ci:
+            hints.append({T("template"): k.value, "DYMO": f"{spec.barcode_prefix}"
+                          f"{str(ci['current']).zfill(ci.get('format_width') or 0)}",
+                          "": "✅" if spec.barcode_prefix in known else "❌ " + T("series_not_set")})
+    if hints:
+        st.caption(T("series_template_counters"))
+        st.dataframe(hints, hide_index=True, width="stretch")
     with st.form("init_series"):
         st.markdown("**" + T("series_set") + "**")
         st.caption(T("series_set_help"))
