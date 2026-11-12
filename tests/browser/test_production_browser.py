@@ -24,8 +24,9 @@ def app_ctx(app_server):
 _DOC_SEQ = iter(range(10, 60))
 
 
-def make_document_row(ctx, weight="496"):
-    """A new document that sorts first in the page's document list (later upload time than any other)."""
+def make_document_row(ctx, weight="496", rows=1):
+    """A new document that sorts first in the page's document list (later upload time than any other).
+    Returns (document id, id of its first row); with rows>1 the document has more lines."""
     from vspm.domain.models import ProductionRow, RowStatus, TemplateKey
     import uuid
     doc = ctx.repo.upsert_document(source="mock", source_file_id="bt-" + uuid.uuid4().hex, source_revision="r1",
@@ -35,6 +36,11 @@ def make_document_row(ctx, weight="496"):
                                          customer_short="ΑΛΦΑΔΗΣ", material="ΓΑΛΒΑΝΙΖΕ", thickness="0,60",
                                          dimensions="34ΧΡΟΛΟ", weight=weight, pieces="4",
                                          template_key=TemplateKey.PG0, approved=True, status=RowStatus.approved))
+    for i in range(2, rows + 1):  # not approved, one value uncertain: pressing Print DYMO / Excel confirms them
+        ctx.repo.add_row(ProductionRow(document_id=doc, row_index=i, customer_full="ΑΛΦΑΔΗΣ", customer_short="ΑΛΦΑΔΗΣ",
+                                       material="ΓΑΛΒΑΝΙΖΕ", thickness="0,60", dimensions="34ΧΡΟΛΟ",
+                                       weight=str(int(weight) + i), pieces="4", template_key=TemplateKey.PG0,
+                                       flags={"dimensions": "uncertain"}, status=RowStatus.needs_review))
     return doc, rid
 
 
@@ -77,7 +83,7 @@ def test_unverified_browser_cannot_print_production_labels(browser, app_server, 
     page.get_by_text("Αυτός ο υπολογιστής").first.wait_for()
     open_print_page(page, app_server)
     page.get_by_text("δεν έχει επιβεβαιωθεί").first.wait_for()
-    assert page.get_by_role("button", name=re.compile("Εκτύπωση & Αποθήκευση")).is_disabled()
+    assert page.get_by_role("button", name=re.compile("Εκτύπωση DYMO")).is_disabled()
     assert jobs() == []
     ctx.close()
 
@@ -87,10 +93,9 @@ def test_print_save_prints_reserved_barcode_once_and_one_excel_row(browser, app_
     ctx, page = new_page(browser, app_server, allow_local_network=True)
     verify_this_browser(page, app_server)
     httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
-    bridge = open_print_page(page, app_server)
-    page.get_by_role("button", name=re.compile("Εκτύπωση & Αποθήκευση")).click()
-    bridge.locator('[data-testid="job-status"][data-state="submitted"]').wait_for()
-    page.get_by_text("Καταχωρήθηκε").first.wait_for()
+    open_print_page(page, app_server)
+    page.get_by_role("button", name=re.compile("Εκτύπωση DYMO")).click()
+    page.get_by_text("Τέλος: τυπώθηκαν 1 από 1").first.wait_for()
 
     label = app_ctx.repo.label_for_row(rid)
     barcode = label["barcode"]
@@ -124,6 +129,25 @@ def test_print_save_prints_reserved_barcode_once_and_one_excel_row(browser, app_
     ctx.close()
 
 
+def test_print_all_labels_of_the_document_one_after_the_other(browser, app_server, dymo_reset, app_ctx):
+    doc, rid = make_document_row(app_ctx, weight="600", rows=3)
+    ctx, page = new_page(browser, app_server, allow_local_network=True)
+    verify_this_browser(page, app_server)
+    httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
+    open_print_page(page, app_server)
+    page.get_by_role("button", name=re.compile("Εκτύπωση DYMO.*\\(3\\)")).click()
+    page.get_by_text("Τέλος: τυπώθηκαν 3 από 3").first.wait_for(timeout=90000)
+    rows = app_ctx.repo.rows_for_document(doc)
+    labels = [app_ctx.repo.label_for_row(r.id) for r in rows]
+    barcodes = [lab["barcode"] for lab in labels]
+    assert len(set(barcodes)) == 3 and all(lab["first_printed_at"] for lab in labels)
+    printed = [etree.fromstring(j["label_xml"].encode()).find(".//BarcodeObject/Text").text for j in jobs()]
+    assert sorted(printed) == sorted(barcodes)  # each label printed exactly once
+    assert all(len(excel_rows(app_ctx, b)) == 1 for b in barcodes)
+    page.get_by_text("έχουν τυπωθεί").first.wait_for()  # nothing left to print
+    ctx.close()
+
+
 def test_two_tabs_print_the_row_only_once(browser, app_server, dymo_reset, app_ctx):
     doc, rid = make_document_row(app_ctx, weight="777")
     ctx, page_a = new_page(browser, app_server, allow_local_network=True)
@@ -135,8 +159,8 @@ def test_two_tabs_print_the_row_only_once(browser, app_server, dymo_reset, app_c
     httpx.post("https://127.0.0.1:41951/__test/reset", verify=False)
     open_print_page(page_a, app_server)
     open_print_page(page_b, app_server)
-    btn_a = page_a.get_by_role("button", name=re.compile("Εκτύπωση & Αποθήκευση"))
-    btn_b = page_b.get_by_role("button", name=re.compile("Εκτύπωση & Αποθήκευση"))
+    btn_a = page_a.get_by_role("button", name=re.compile("Εκτύπωση DYMO"))
+    btn_b = page_b.get_by_role("button", name=re.compile("Εκτύπωση DYMO"))
     btn_a.click()
     btn_b.click()
     page_a.wait_for_timeout(6000)

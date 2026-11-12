@@ -9,7 +9,7 @@ from vspm.services.production import (
     AlreadyPrinted, PossibleDuplicate, PreviousPrintUnknown, ProductionError, StationNotVerified, ValidationFailed,
 )
 from vspm.ui.common import T, flash, lang, operator, session_id
-from vspm.ui.views.approve import _approve, approvable
+from vspm.ui.views import batch_print
 from vspm.ui.dymo_bridge import dymo_bridge
 from vspm.ui.views.printer_page import process_bridge_value, show_messages
 
@@ -63,6 +63,9 @@ def _confirm(ctx, label_id: int, ok: bool) -> None:
 
 def _reserve_manual(ctx, row_id: int, allow_dup: bool) -> None:
     try:
+        left = ctx.production.approve_row(row_id, operator())  # downloading it is the operator's confirmation
+        if left:
+            raise ValidationFailed(left)
         ctx.production.prepare_label(row_id, operator(), allow_possible_duplicate=allow_dup)
     except PossibleDuplicate as e:
         st.session_state["possible_duplicate"] = {"row_id": row_id, "msg": str(e)}
@@ -85,7 +88,14 @@ def bridge_section(ctx) -> None:
         "pending", "not_submitted") else None
     value = dymo_bridge("print", job=job, acked=st.session_state.get("bridge_acked", []), lang=lang(),
                         key="bridge_print")
-    show_messages(process_bridge_value(ctx, value, "print"))
+    messages = process_bridge_value(ctx, value, "print")
+    if st.session_state.get("batch"):  # a series: only problems are worth showing, the page moves on
+        for level, msg in messages:
+            if level != "success":
+                flash(level, msg)
+        batch_print.step(ctx)
+    else:
+        show_messages(messages)
 
 
 def browser_actions(ctx, row, row_id: int, label) -> None:
@@ -117,17 +127,15 @@ def browser_actions(ctx, row, row_id: int, label) -> None:
 
     needs_print = label is None or label["print_status"] in ("barcode_reserved", "error")
     if needs_print:
-        errors = ctx.production.check_printable(row) if label is None else {}
+        errors = batch_print.blocking(ctx.production.check_printable(row)) if label is None else {}
         if errors:
             st.warning(T("not_printable") + "\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in errors.items()))
-            if approvable(errors):
-                st.button(T("approve_here"), type="primary", width="stretch", key=f"approve_{row_id}",
-                          on_click=_approve, args=(ctx, row_id))
-        title = "🖨️ " + T("print_save") + (f" ({label['barcode']})" if label else "")
-        blocked = bool(errors) or pending or (ctx.settings.require_verified_station and not verified) or \
-            (bool(dup) and dup.get("row_id") == row_id and not allow_dup)
-        st.button(title, type="primary", width="stretch", disabled=blocked, key="browser_print_save",
-                  on_click=_start, args=(ctx, row_id), kwargs={"allow_dup": allow_dup})
+        if dup and dup.get("row_id") == row_id:  # only this row, after the operator checked the duplicate
+            title = "🖨️ " + T("print_save") + (f" ({label['barcode']})" if label else "")
+            blocked = bool(errors) or pending or (ctx.settings.require_verified_station and not verified) or \
+                not allow_dup
+            st.button(title, type="primary", width="stretch", disabled=blocked, key="browser_print_save",
+                      on_click=_start, args=(ctx, row_id), kwargs={"allow_dup": allow_dup})
 
     if label is not None and label["first_printed_at"]:
         c1, c2 = st.columns(2)
@@ -142,7 +150,7 @@ def browser_actions(ctx, row, row_id: int, label) -> None:
     with st.expander("⬇️ " + T("manual_fallback"), expanded=False):
         st.caption(T("manual_fallback_help"))
         if label is None:
-            errors = ctx.production.check_printable(row)
+            errors = batch_print.blocking(ctx.production.check_printable(row))
             st.button(T("reserve_for_manual"), disabled=bool(errors), key="reserve_manual", on_click=_reserve_manual,
                       args=(ctx, row_id, allow_dup))
         else:

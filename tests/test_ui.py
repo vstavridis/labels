@@ -64,7 +64,7 @@ def test_read_with_ai_then_review_and_print_pages_show_rows(env):
     assert any("Εκτύπωση" in lab for lab in labels)
 
 
-def test_print_button_prints_one_label_and_records_excel(env):
+def test_print_button_prints_the_labels_and_records_excel(env):
     ctx = build_context(env)
     doc = ctx.documents.latest(5)[0].doc_id
     rows = ctx.documents.run_ocr(doc, ctx.ocr_provider())
@@ -72,7 +72,7 @@ def test_print_button_prints_one_label_and_records_excel(env):
     r.approved, r.flags, r.template_needs_confirmation = True, {}, False
     ctx.repo.save_row(r)
     at = run_page("label_print", prep=f"st.session_state['doc_id'] = {doc}; st.session_state['row_id'] = {r.id}")
-    btn = [b for b in at.button if "Εκτύπωση & Αποθήκευση" in b.label]
+    btn = [b for b in at.button if "Εκτύπωση DYMO / Excel" in b.label]
     assert btn and not btn[0].disabled
     btn[0].click().run()
     assert not at.exception, [e.value for e in at.exception]

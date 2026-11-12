@@ -8,7 +8,6 @@ import pandas as pd
 import streamlit as st
 
 from vspm.domain.models import ProductionRow, RowStatus, TemplateKey
-from vspm.domain.validation import validate_row
 from vspm.ui.common import S, T, flash, get_context, show_document, show_flash
 from vspm.ui.views.recognition import doc_selector
 
@@ -38,7 +37,7 @@ def to_frame(ctx, rows: list[ProductionRow]) -> pd.DataFrame:
     data = []
     for r in rows:
         label = ctx.repo.label_for_row(r.id)
-        d = {"id": r.id, "approved": r.approved, "#": r.row_index,
+        d = {"id": r.id, "#": r.row_index,
              "template": r.template_key.value if r.template_key else None}
         for f, _, _ in FIELDS:
             d[f] = getattr(r, f)
@@ -47,7 +46,7 @@ def to_frame(ctx, rows: list[ProductionRow]) -> pd.DataFrame:
         d["status"] = S(r.status.value)
         d["barcode"] = label["barcode"] if label else ""
         data.append(d)
-    cols = ["id", "approved", "#", "flags", "template"] + [f for f, _, _ in FIELDS] + ["status", "barcode"]
+    cols = ["id", "#", "flags", "template"] + [f for f, _, _ in FIELDS] + ["status", "barcode"]
     return pd.DataFrame(data, columns=cols)
 
 
@@ -77,7 +76,7 @@ def fill_down(df: pd.DataFrame, col: str) -> tuple[pd.DataFrame, int]:
     return out, n
 
 
-EDITABLE = ["approved", "template"] + [f for f, _, _ in FIELDS]
+EDITABLE = ["template"] + [f for f, _, _ in FIELDS]
 
 
 def _changed(original: pd.DataFrame, edited: pd.DataFrame) -> bool:
@@ -95,10 +94,7 @@ def _changed(original: pd.DataFrame, edited: pd.DataFrame) -> bool:
         if col not in original.columns:
             continue
         for a, b in zip(original[col], edited[col]):
-            if col == "approved":
-                if bool(a) != bool(b if not (isinstance(b, float) and math.isnan(b)) else False):
-                    return True
-            elif _s(a) != _s(b):
+            if _s(a) != _s(b):
                 return True
     return False
 
@@ -115,7 +111,7 @@ def fill_candidates(df: pd.DataFrame) -> dict[str, str]:
     return out
 
 
-def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame, confirmed: bool) -> list[str]:
+def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame) -> list[str]:
     msgs: list[str] = []
     orig_ids = {int(i) for i in original["id"].dropna()}
     kept_ids = {int(i) for i in edited["id"].dropna()}
@@ -172,27 +168,11 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
             row.template_key = TemplateKey(new_tpl)
             row.template_needs_confirmation = False
             row.template_reason = f"operator selected {new_tpl}"
-        want_approved = bool(er.get("approved"))
-        if want_approved:
-            needs = any(v == "uncertain" for v in row.flags.values()) or row.template_needs_confirmation
-            if needs and not confirmed:
-                msgs.append("⚠️ " + T("need_confirm") + f" (#{row.row_index})")
-                want_approved = False
-            elif needs:
-                row.flags = {k: v for k, v in row.flags.items() if v != "uncertain"}
-                row.template_needs_confirmation = False
-                ctx.db.audit("row", row.id, "flags_confirmed", {}, st.session_state.get("operator"))
-        row.approved = False
-        if want_approved:
-            errors = validate_row(row)
-            if errors:
-                msgs.append("⛔ " + T("row_errors", i=row.row_index, e="; ".join(f"{k}: {v}" for k, v in errors.items())))
-            else:
-                row.approved = True
+        # No approval column: the operator confirms the rows by printing them (Print DYMO / Excel).
         if row.status in (RowStatus.draft, RowStatus.ocr_complete, RowStatus.needs_review, RowStatus.approved):
-            row.status = RowStatus.approved if row.approved else (
-                RowStatus.needs_review if any(v == "uncertain" for v in row.flags.values()) or
-                row.template_needs_confirmation else RowStatus.ocr_complete)
+            row.status = RowStatus.needs_review if any(v == "uncertain" for v in row.flags.values()) or \
+                row.template_needs_confirmation else RowStatus.ocr_complete
+            row.approved = False
         try:
             ctx.repo.save_row(row)
         except ValueError as e:
@@ -218,7 +198,6 @@ def render() -> None:
         original = to_frame(ctx, rows)
         colcfg = {
             "id": None,
-            "approved": st.column_config.CheckboxColumn(T("approved"), width="small"),
             "#": st.column_config.NumberColumn("#", width="small", disabled=True),
             "template": st.column_config.SelectboxColumn(T("template"), options=[k.value for k in TemplateKey],
                                                          width="small"),
@@ -236,8 +215,7 @@ def render() -> None:
         edited = st.data_editor(original, column_config=colcfg, num_rows="dynamic", hide_index=True,
                                 width="stretch", key=f"editor_{doc_id}_{len(rows)}_{ver}")
         if _changed(original, edited):
-            # Saved at once - no Save button. Ticking "Approved" on a row confirms its ⚠ values.
-            for m in apply_changes(ctx, doc_id, original, edited, True):
+            for m in apply_changes(ctx, doc_id, original, edited):  # saved at once - no Save button
                 flash("warning", m)
             st.session_state["editor_ver"] = ver + 1
             st.rerun()
@@ -254,7 +232,7 @@ def render() -> None:
                 if cols[i % len(cols)].button(f"⬇ {names[col]}: {short}", key=f"fill_{col}", width="stretch",
                                               help=T("fill_one_help", c=names[col], v=value)):
                     filled, n = fill_down(original, col)
-                    msgs = apply_changes(ctx, doc_id, original, filled, True)
+                    msgs = apply_changes(ctx, doc_id, original, filled)
                     if col == "template":  # choosing the type for all rows is the operator's confirmation
                         for r in ctx.repo.rows_for_document(doc_id):
                             if r.label_id is None and r.template_key and r.template_key.value == value \

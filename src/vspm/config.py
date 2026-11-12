@@ -89,6 +89,8 @@ class Settings(BaseSettings):
     # Speed of "Read with AI" on OpenAI: less thinking and a smaller picture answer in seconds instead of
     # a minute or more; uncertain values are still marked ⚠ for the operator (VSPM_OCR_OPENAI_EFFORT).
     ocr_openai_effort: str = "low"
+    # OneDrive workbook: rows are written by a background thread right after printing (False: during the click)
+    excel_background_sync: bool = True
     ocr_image_max_side: int = 1600  # longest side in pixels of the picture sent to the AI
 
     printer_mode: PrinterMode = PrinterMode.mock
@@ -117,7 +119,6 @@ class Settings(BaseSettings):
     onedrive_templates_url: str = ""  # OneDrive folder with the four .label files
     onedrive_template_files: str = ""  # exact names: "VS=…label;PG=…label;PG0=…label;EX=…label" (empty = by COUNTER)
     onedrive_workbook_url: str = ""  # production workbook (Σχισμενα.xlsx)
-    onedrive_workbook_test_url: str = ""  # a separate COPY used for the end-to-end test
     gdrive_folder_url: str = ""
     customer_label_same_as_full: bool = True  # one customer value: printed and written to Excel F as entered
     drive_stamp_barcodes: bool = True  # write each printed barcode onto the scan in Google Drive (Editor role)

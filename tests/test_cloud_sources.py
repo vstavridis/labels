@@ -48,9 +48,9 @@ def ms(tmp_path):
 
 
 def cloud_ctx(settings, ms, **kw):
+    kw.setdefault("excel_background_sync", False)  # rows written during the click: easier to check
     s = with_settings(settings, ms_client_id="00000000-test-client", secret_key="a-long-test-secret-key-123",
                       onedrive_templates_url=FOLDER_LINK, onedrive_workbook_url=BOOK_LINK,
-                      onedrive_workbook_test_url=COPY_LINK,
                       onedrive_template_files=";".join(f"{k}={v}" for k, v in NAMES.items()),
                       template_dir=settings.data_dir / "no_template_files", **kw)
     ctx = build_context(s)
@@ -239,24 +239,24 @@ def test_inspect_reads_the_workbook_without_writing(settings, ms):
     assert ms.puts() == []
 
 
-def test_rows_stay_staged_until_the_copy_test_passed_and_production_is_enabled(settings, ms):
+def test_rows_stay_staged_while_writing_is_paused(settings, ms):
     ctx = ready_ctx(settings, ms)
+    ctx.cloud.workbook.set_production(False, "admin")
     out, lab = make_printed_label(ctx)
     assert lab["excel_status"] == "staged" and ms.puts() == []  # nothing written to OneDrive
-    with pytest.raises(OneDriveError, match="COPY first"):
-        ctx.cloud.workbook.set_production(True, "admin")
-
-
-def test_copy_test_then_rows_written_once_with_formulas_and_other_parts_untouched(settings, ms):
-    ctx = ready_ctx(settings, ms)
-    before = next(i for i in ms.items.values() if i.name == "Σχισμενα.xlsx").content
-    v = ctx.cloud.workbook.validate_copy("admin")
-    assert v["ok"], v["checks"]
-    assert puts_to(ms, "Σχισμενα.xlsx") == []  # the test only touched the copy
     ctx.cloud.workbook.set_production(True, "admin")
+    assert ctx.cloud.workbook.sync_pending("admin").status == "synchronized"
+    assert book_rows(ms, barcode=out.barcode)
+
+
+def test_rows_written_to_the_production_workbook_once_with_formulas_and_other_parts_untouched(settings, ms):
+    ctx = ready_ctx(settings, ms)
+    assert ctx.cloud.workbook.production_enabled()  # no test on a copy needed
+    before = next(i for i in ms.items.values() if i.name == "Σχισμενα.xlsx").content
     out, lab = make_printed_label(ctx)
     lab = ctx.repo.get_label(lab["id"])
     assert lab["excel_status"] == "synchronized"
+    assert puts_to(ms, "Σχισμενα - ΔΟΚΙΜΗ.xlsx") == []  # only the production workbook is written
     rows = book_rows(ms, barcode=out.barcode)
     assert rows == [lab["excel_row_number"]]
     ed = book_rows(ms)
@@ -273,25 +273,21 @@ def test_copy_test_then_rows_written_once_with_formulas_and_other_parts_untouche
     assert ctx.cloud.workbook.backups()  # copy of the workbook before the change
 
 
-def test_copy_test_refuses_the_production_file_and_unsafe_servers(settings, ms):
+def test_background_writer_adds_the_rows_of_several_labels(settings, ms):
     ctx = ready_ctx(settings, ms)
-    ctx.cloud.config.set("onedrive_workbook_test_url", BOOK_LINK, "admin")
-    v = ctx.cloud.workbook.validate_copy("admin")
-    assert not v["ok"] and "PRODUCTION" in v["checks"][-1][2]
-    assert puts_to(ms, "Σχισμενα.xlsx") == []
-    ctx.cloud.config.set("onedrive_workbook_test_url", COPY_LINK, "admin")
-    ms.ignore_if_match = True  # a server that would overwrite blindly
-    v = ctx.cloud.workbook.validate_copy("admin")
-    assert not v["ok"] and any(c[0] == "stale eTag refused" and not c[1] for c in v["checks"])
-    with pytest.raises(OneDriveError):
-        ctx.cloud.workbook.set_production(True, "admin")
+    ctx.production.s = ctx.settings.model_copy(update={"excel_background_sync": True})
+    printed = [make_printed_label(ctx, weight=str(490 + i)) for i in range(3)]
+    assert all("γράφεται" in " ".join(o.messages) or "being written" in " ".join(o.messages) for o, _ in printed)
+    assert ctx.cloud.workbook.wait_idle(30)
+    ctx.cloud.workbook.sync_pending("admin")  # whatever the thread had not picked up yet
+    for out, lab in printed:
+        lab = ctx.repo.get_label(lab["id"])
+        assert lab["excel_status"] == "synchronized"
+        assert book_rows(ms, barcode=out.barcode) == [lab["excel_row_number"]]
 
 
 def enabled_ctx(settings, ms):
-    ctx = ready_ctx(settings, ms)
-    assert ctx.cloud.workbook.validate_copy("admin")["ok"]
-    ctx.cloud.workbook.set_production(True, "admin")
-    return ctx
+    return ready_ctx(settings, ms)
 
 
 def test_someone_saves_the_workbook_meanwhile_their_change_is_kept(settings, ms):

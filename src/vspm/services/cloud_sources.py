@@ -7,23 +7,22 @@
   VSPM_EXCEL_MODE=onedrive they are written to the OneDrive workbook by ONE writer at a time
   (database lease): download -> append with the same code as the local writer (formulas L-O,
   no duplicate barcodes) -> upload with If-Match: <eTag> (refused if anyone saved meanwhile)
-  -> read back and verify. Until an end-to-end test on a separate COPY has passed and an admin
-  has enabled it, nothing is written to the production workbook: rows stay staged.
+  -> read back and verify, with a backup of the workbook before every change. Rows are written in
+  a background thread right after printing; an admin can pause writing (rows then stay staged).
 """
 
 from __future__ import annotations
 
 import base64
 import difflib
-import io
 import json
 import logging
 import re
+import threading
 import time
 import uuid
-import zipfile
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import datetime
 from typing import Callable, Optional
 from urllib.parse import parse_qs, urlparse
 
@@ -39,7 +38,7 @@ from vspm.integrations.onedrive import (
 
 log = logging.getLogger(__name__)
 
-CONFIG_KEYS = ("onedrive_templates_url", "onedrive_workbook_url", "onedrive_workbook_test_url",
+CONFIG_KEYS = ("onedrive_templates_url", "onedrive_workbook_url",
                "onedrive_template_files", "gdrive_folder_url")
 KEEP_BACKUPS = 20
 HTTP_CLIENT_FACTORY: Optional[Callable[[], object]] = None  # tests: route Microsoft calls to a test double
@@ -335,11 +334,14 @@ class WorkbookSync:
         self.db, self.od, self.config, self.s, self.repo = db, onedrive, config, settings, repo
         self.payload_for = payload_for
         self.clock = clock
+        self._lock = threading.Lock()
+        self._dirty = False
+        self._running = False
 
     # ---- status / checks ------------------------------------------------------------------
     def inspect(self, role: str) -> dict:
         """Download (read-only) and describe the workbook. Nothing is written."""
-        url = self.config.get("onedrive_workbook_url" if role == "workbook" else "onedrive_workbook_test_url")
+        url = self.config.get("onedrive_workbook_url")
         try:
             item = self.od.resolve(role, url)
             if item.is_folder:
@@ -364,68 +366,52 @@ class WorkbookSync:
         return self.config.get_json("excel_validation")
 
     def production_enabled(self) -> bool:
-        flag = self.config.get_json("excel_production")
-        prod = self.od.file_row("workbook")
-        v = self.validation()
-        return bool(flag.get("enabled") and v.get("ok") and prod is not None and prod["item_id"]
-                    and prod["item_id"] != v.get("item_id"))
-
-    def validate_copy(self, user: str) -> dict:
-        """End-to-end test on the separate COPY: append a test row, upload with If-Match, read back,
-        compare every other part of the file, and check that a stale eTag is refused."""
-        checks: list[tuple[str, bool, str]] = []
-        test_url = self.config.get("onedrive_workbook_test_url")
-        prod_url = self.config.get("onedrive_workbook_url")
-        result = {"ok": False, "at": utcnow(), "by": user, "checks": checks}
-        try:
-            item = self.od.resolve("workbook_test", test_url)
-            if prod_url:
-                prod = self.od.resolve("workbook", prod_url)
-                if prod.item_id == item.item_id:
-                    raise OneDriveError("The test copy link points to the PRODUCTION workbook. Make a separate copy "
-                                        "in OneDrive and use its link.")
-            original, meta = self.od.files.download(item.drive_id, item.item_id)
-            barcode = f"TEST{int(self.clock()) % 100000000:08d}"
-            payload = ExcelRowPayload(material="ΔΟΚΙΜΗ VSPM", thickness="0,50", dimensions="1000", pieces="1",
-                                      weight="1", customer="TEST", category="VS", barcode=barcode, location="",
-                                      roll="", print_date=date.today().isoformat())
-            new_bytes, results, written = append_rows(original, self.s.excel_sheet, [payload],
-                                                      date_format=self.s.excel_date_format)
-            checks.append(("row prepared", True, f"row {written[0][0]}"))
-            uploaded = self.od.files.replace_if_match(item.drive_id, item.item_id, new_bytes, meta.etag)
-            checks.append(("upload with If-Match accepted", True, uploaded.etag[:20]))
-            back, meta2 = self.od.files.download(item.drive_id, item.item_id)
-            verify_rows(back, self.s.excel_sheet, written)
-            checks.append(("row read back from OneDrive: A-K, P values, formulas L-O, unique barcode", True, barcode))
-            changed = _changed_parts(original, back)
-            allowed = {"xl/workbook.xml", "xl/styles.xml", XlsxPackage(original).sheet_part(self.s.excel_sheet)}
-            extra = sorted(changed - allowed)
-            checks.append(("all other parts of the workbook unchanged", not extra, ", ".join(extra) or
-                           f"{len(_parts(original)) - len(changed)} parts identical"))
-            try:
-                self.od.files.replace_if_match(item.drive_id, item.item_id, original, meta.etag)  # stale eTag
-                checks.append(("stale eTag refused", False, "OneDrive ACCEPTED an upload with an old eTag - automatic "
-                               "writing would not be safe"))
-            except PreconditionFailed:
-                checks.append(("stale eTag refused (HTTP 412)", True, "another PC's or person's save is never "
-                               "overwritten"))
-            result.update(ok=all(c[1] for c in checks), item_id=item.item_id, name=item.name, barcode=barcode)
-        except (OneDriveError, ExcelSyncError, XlsxError) as e:
-            checks.append(("test", False, str(e)))
-        self.config.set_json("excel_validation", result)
-        self.db.audit("cloud", "excel_validation", "run", {"ok": result["ok"], "checks": checks}, user)
-        return result
+        """Rows are written to the OneDrive workbook unless an admin paused it (or no link is set)."""
+        return bool(self.config.get("onedrive_workbook_url")) and not self.config.get_json("excel_paused").get("paused")
 
     def set_production(self, enabled: bool, user: str) -> None:
-        if enabled:
-            v = self.validation()
-            if not v.get("ok"):
-                raise OneDriveError("Run the end-to-end test on the workbook COPY first (it must pass).")
-            prod = self.od.resolve("workbook", self.config.get("onedrive_workbook_url"))
-            if prod.item_id == v.get("item_id"):
-                raise OneDriveError("The production link and the tested copy are the same file.")
-        self.config.set_json("excel_production", {"enabled": bool(enabled), "by": user, "at": utcnow()})
-        self.db.audit("cloud", "excel_production", "enabled" if enabled else "disabled", {}, user)
+        self.config.set_json("excel_paused", {"paused": not enabled, "by": user, "at": utcnow()})
+        self.db.audit("cloud", "excel_production", "enabled" if enabled else "paused", {}, user)
+
+    # ---- background writer ----------------------------------------------------------------------
+    def request_sync(self, user: str) -> None:
+        """Write the waiting rows in a background thread (one at a time per server; the database lease
+        keeps writers on other servers out). Labels printed meanwhile are picked up by the same thread."""
+        with self._lock:
+            self._dirty = True
+            if self._running:
+                return
+            self._running = True
+        threading.Thread(target=self._worker, args=(user,), name="vspm-excel-sync", daemon=True).start()
+
+    def _worker(self, user: str) -> None:
+        tries = 0
+        while True:
+            with self._lock:
+                if not self._dirty or tries >= 40:
+                    self._running = False
+                    return
+                self._dirty = False
+            tries += 1
+            try:
+                res = self.sync_pending(user)
+            except Exception:  # noqa: BLE001 - the rows stay pending and are retried on the next sync
+                log.exception("Excel background sync failed")
+                res = None
+            if res is not None and res.status == "busy":
+                time.sleep(3)
+                with self._lock:
+                    self._dirty = True
+
+    def wait_idle(self, timeout: float = 60) -> bool:
+        """For tests and scripts: wait until the background writer has finished."""
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._lock:
+                if not self._running:
+                    return True
+            time.sleep(0.05)
+        return False
 
     # ---- the queue ----------------------------------------------------------------------------
     def pending_labels(self, label_ids: Optional[list[int]] = None) -> list:
@@ -441,7 +427,8 @@ class WorkbookSync:
             for lab in labels:
                 if lab["excel_status"] != ExcelStatus.staged.value:
                     self.repo.update_label(lab["id"], excel_status=ExcelStatus.staged.value)
-            return SyncResult("staged", "Automatic OneDrive writing is not enabled yet: rows stay staged.", {})
+            return SyncResult("staged", "Writing to the OneDrive workbook is paused (Settings -> Cloud sources): "
+                                        "rows stay staged.", {})
         lease = Lease(self.db, "excel_writer", clock=self.clock)
         if not lease.acquire():
             return SyncResult("busy", "The other PC is updating the workbook right now; the rows stay pending and "
@@ -518,16 +505,6 @@ class WorkbookSync:
         r = self.db.one("SELECT * FROM workbook_backups WHERE id=?", (backup_id,))
         stamp = datetime.fromisoformat(r["created_at"]).strftime("%Y%m%d-%H%M%S")
         return f"workbook-backup-{stamp}.xlsx", base64.b64decode(r["content_b64"])
-
-
-def _parts(data: bytes) -> dict[str, bytes]:
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        return {n: z.read(n) for n in z.namelist()}
-
-
-def _changed_parts(a: bytes, b: bytes) -> set[str]:
-    pa, pb = _parts(a), _parts(b)
-    return {n for n in set(pa) | set(pb) if pa.get(n) != pb.get(n)}
 
 
 class CloudServices:

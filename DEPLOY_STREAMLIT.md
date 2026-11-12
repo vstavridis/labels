@@ -102,9 +102,6 @@ app no access; you sign in once with your Microsoft account and the app keeps th
    **Files.ReadWrite**, **offline_access**, **User.Read** → **Add permissions**.
    (Personal OneDrive has no narrower folder permission. Files.ReadWrite is needed only because the app
    may later add rows to the workbook; templates are only read.)
-6. In OneDrive make a **copy of `Σχισμενα.xlsx`** (e.g. `Σχισμενα - ΔΟΚΙΜΗ.xlsx`) and get its link
-   (*Share → Copy link*). The app tests automatic Excel writing on this copy before it may touch the
-   real workbook.
 
 ## Step 4 — Prepare the Secrets text
 
@@ -122,7 +119,6 @@ text editor (Notepad) and replace the placeholders:
 | `VSPM_ONEDRIVE_TEMPLATES_URL` | link of the OneDrive folder with the four `.label` files |
 | `VSPM_ONEDRIVE_TEMPLATE_FILES` | the four exact file names: `VS=…label;PG=…label;PG0=…label;EX=…label` |
 | `VSPM_ONEDRIVE_WORKBOOK_URL` | link of `Σχισμενα.xlsx` |
-| `VSPM_ONEDRIVE_WORKBOOK_TEST_URL` | link of the COPY (step 3b.6) |
 | `VSPM_GOOGLE_CREDENTIALS_JSON` | the whole content of the service-account JSON file, unchanged, between `'''` and `'''` (three **single** quotes, each on its own line). Alternative: delete that line and add a table `[google_service_account]` with the file's fields (`type = "service_account"`, `client_email = "…"`, `private_key = "…"`, `token_uri = "…"`, …) at the end of the Secrets |
 | `OPENAI_API_KEY` | your OpenAI key (with `VSPM_OCR_PROVIDER = "openai"`) |
 | `[auth]` `redirect_uri` | `https://YOUR-APP-NAME.streamlit.app/oauth2callback` |
@@ -134,7 +130,7 @@ Leave these as they are — they are the safe cloud settings:
 ```toml
 VSPM_BARCODE_MODE = "database"        # barcodes come from the shared database
 VSPM_PRINTER_MODE = "browser"         # each browser prints to its own PC's DYMO
-VSPM_EXCEL_MODE = "onedrive"          # rows stay staged until the copy test passed AND you enable writing
+VSPM_EXCEL_MODE = "onedrive"          # every printed label is written to the workbook on OneDrive
 VSPM_EXCEL_WRITE_ENABLED = "false"
 ```
 
@@ -175,11 +171,11 @@ You should now see the sign-in page. Sign in with your admin e-mail.
    originals in OneDrive are only read). From now on the app checks OneDrive for changed templates
    automatically (every 10 minutes at most). No manual upload is needed.
 4. **Test Excel workbook access** → name, size, last row and formulas L–O are shown (read-only).
-5. **End-to-end test on the COPY** → every check must show ✅ (row added to the *copy* with formulas, read
-   back, nothing else in the file changed, an outdated upload refused). Open the copy in Excel Online and
-   look at the new test row.
-6. Leave **automatic writing to the PRODUCTION workbook** OFF for now: printed labels wait in
-   *History → Excel* (staged). Switch it on only after step 9 went well and you have checked the copy.
+5. **Automatic writing to the production workbook (OneDrive)** is ON: every printed label is added to
+   `Σχισμενα.xlsx` a few seconds after printing (a copy of the file is kept before every change, see
+   *Backups*). Switch it off to pause writing; printed labels then wait in *History → Excel* and are
+   written when it is switched on again (*Sync pending rows now*).
+6. After the first printed labels, open the workbook in Excel Online and check the new rows.
 7. **Test Google Drive connection** → the 5 latest scans are listed. If it fails, check that the folder is
    shared with the service account e-mail shown there.
 8. **⚙️ Settings → Customer rules**: enter or check the customer abbreviations.

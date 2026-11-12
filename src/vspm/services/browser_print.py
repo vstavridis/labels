@@ -170,7 +170,8 @@ class BrowserPrintService:
                              "ORDER BY id", (label_id,))
 
     def cancel(self, job_key: str, user: str) -> None:
-        self.db.execute("UPDATE print_jobs SET status='cancelled' WHERE job_key=? AND status='pending'", (job_key,))
+        self.db.execute("UPDATE print_jobs SET status='cancelled' WHERE job_key=? AND status IN ('pending',"
+                        "'not_submitted')", (job_key,))
         self.db.audit("print_job", job_key, "cancelled", {}, user)
 
     # ---- reports from the browser -------------------------------------------------------

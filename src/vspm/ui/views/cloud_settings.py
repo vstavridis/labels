@@ -11,7 +11,7 @@ from vspm.ui.auth import is_admin
 from vspm.ui.common import T, flash, operator, reload_context
 
 FIELDS = [("onedrive_templates_url", "cs_templates_url"), ("onedrive_template_files", "cs_template_files"),
-          ("onedrive_workbook_url", "cs_workbook_url"), ("onedrive_workbook_test_url", "cs_workbook_test_url"),
+          ("onedrive_workbook_url", "cs_workbook_url"),
           ("gdrive_folder_url", "cs_gdrive_url")]
 
 
@@ -145,36 +145,21 @@ def render(ctx) -> None:
     wb = cloud.workbook
     st.caption(T("cs_excel_mode", m=s.excel_mode.value,
                  p=T("cs_prod_on") if wb.production_enabled() else T("cs_prod_off")))
-    b = st.columns(3)
+    b = st.columns(2)
     if b[0].button(T("cs_test_workbook"), disabled=not admin):
         info = _run("Excel", lambda: wb.inspect("workbook"))
         if info:
             st.success(T("cs_workbook_ok", **info))
-    if b[1].button(T("cs_test_copy"), disabled=not admin):
-        info = _run("Excel", lambda: wb.inspect("workbook_test"))
-        if info:
-            st.success(T("cs_workbook_ok", **info))
-    if b[2].button(T("cs_validate"), disabled=not admin):
-        _run("Excel", lambda: wb.validate_copy(operator()))
-    v = wb.validation()
-    if v:
-        (st.success if v.get("ok") else st.error)(T("cs_validation", ok="✅" if v.get("ok") else "❌",
-                                                    t=str(v.get("at", ""))[:19], n=v.get("name", "—")))
-        st.dataframe([{"check": c[0], "ok": "✅" if c[1] else "❌", "": c[2]} for c in v.get("checks", [])],
-                     hide_index=True, width="stretch")
+    if b[1].button(T("cs_sync_now")):
+        res = _run("Excel", lambda: wb.sync_pending(operator()))
+        if res:
+            (st.success if res.status in ("synchronized", "nothing") else st.warning)(res.message)
     if admin:
         enabled = wb.production_enabled()
-        want = st.toggle(T("cs_prod_toggle"), value=enabled, disabled=not v.get("ok") and not enabled)
+        want = st.toggle(T("cs_prod_toggle"), value=enabled, disabled=not cloud.config.get("onedrive_workbook_url"))
         if want != enabled:
-            try:
-                wb.set_production(want, operator())
-                st.rerun()
-            except OneDriveError as e:
-                st.error(str(e))
-        if st.button(T("cs_sync_now")):
-            res = _run("Excel", lambda: wb.sync_pending(operator()))
-            if res:
-                (st.success if res.status in ("synchronized", "nothing") else st.warning)(res.message)
+            wb.set_production(want, operator())
+            st.rerun()
     backups = wb.backups()
     if backups and admin:
         with st.expander(T("cs_backups", n=len(backups))):

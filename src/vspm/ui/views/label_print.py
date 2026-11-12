@@ -1,13 +1,13 @@
-"""Page D - Label preview and printing (one production row at a time)."""
+"""Page D - Print DYMO / Excel for every label of the document; preview, reprint and checks per row."""
 
 from __future__ import annotations
 
 import streamlit as st
 
 from vspm.domain.models import LabelContent
-from vspm.services.production import AlreadyPrinted, PossibleDuplicate, ProductionError, ValidationFailed
+from vspm.services.production import AlreadyPrinted, ProductionError
 from vspm.ui.common import S, T, badge, flash, get_context, operator, show_flash, status_kind
-from vspm.ui.views.approve import _approve, approvable
+from vspm.ui.views import batch_print
 from vspm.ui.views.recognition import doc_selector
 
 
@@ -30,11 +30,16 @@ def render() -> None:
         return (f"{mark} #{r.row_index} · {r.customer_short or r.customer_full} · {r.material} {r.thickness} · "
                 f"{r.dimensions} · {r.weight} kg" + (f" · {lab['barcode']}" if lab else ""))
 
+    browser_mode = ctx.settings.printer_mode.value == "browser"
+    station_ok = not browser_mode or not ctx.settings.require_verified_station or ctx.browser.station_verified(
+        st.session_state.get("station_id"), st.session_state.get("station_printer"))
+    batch_print.button(ctx, doc_id, disabled=not station_ok)
+    st.divider()
+
     ids = [r.id for r in rows]
     cur = st.session_state.get("row_id")
     row_id = st.selectbox(T("select_row"), ids, index=ids.index(cur) if cur in ids else 0, format_func=fmt)
     st.session_state["row_id"] = row_id
-    browser_mode = ctx.settings.printer_mode.value == "browser"
     left, right = st.columns([3, 2])
     if browser_mode:
         from vspm.ui.views.browser_actions import bridge_section
@@ -76,32 +81,24 @@ def render() -> None:
             from vspm.ui.views.browser_actions import browser_actions
             browser_actions(ctx, row, row_id, label)
         elif not label:
-            errors = ctx.production.check_printable(row)
+            errors = batch_print.blocking(ctx.production.check_printable(row))
             if errors:
                 st.warning(T("not_printable") + "\n\n" + "\n".join(f"- **{k}**: {v}" for k, v in errors.items()))
-                if approvable(errors):
-                    st.button(T("approve_here"), type="primary", width="stretch", key=f"approve_{row_id}",
-                              on_click=_approve, args=(ctx, row_id))
             dup = st.session_state.get("possible_duplicate")
-            allow_dup = False
-            if dup and dup.get("row_id") == row_id:
+            if dup and dup.get("row_id") == row_id:  # only this row, after the operator checked the duplicate
                 st.error(T("possible_duplicate", e=dup["msg"]))
-                allow_dup = st.checkbox(T("print_anyway"), key=f"dup_ok_{row_id}")
-            if st.button("🖨️ " + T("print_save"), type="primary", width="stretch",
-                         disabled=bool(errors) or (bool(dup) and dup.get("row_id") == row_id and not allow_dup)):
-                try:
-                    out = ctx.production.print_and_save(row_id, operator=operator(),
-                                                        allow_possible_duplicate=allow_dup)
-                    st.session_state.pop("possible_duplicate", None)
-                    for m in out.messages:
-                        flash("success" if out.print_ok else "error", f"{out.barcode}: {m}")
-                except PossibleDuplicate as e:
-                    st.session_state["possible_duplicate"] = {"row_id": row_id, "msg": str(e)}
-                except ValidationFailed as e:
-                    flash("error", str(e))
-                except (ProductionError, AlreadyPrinted) as e:
-                    flash("error", str(e))
-                st.rerun()
+                if st.checkbox(T("print_anyway"), key=f"dup_ok_{row_id}") and st.button(
+                        "🖨️ " + T("print_save"), type="primary", width="stretch", disabled=bool(errors)):
+                    try:
+                        ctx.production.approve_row(row_id, operator())
+                        out = ctx.production.print_and_save(row_id, operator=operator(),
+                                                            allow_possible_duplicate=True)
+                        st.session_state.pop("possible_duplicate", None)
+                        for m in out.messages:
+                            flash("success" if out.print_ok else "error", f"{out.barcode}: {m}")
+                    except (ProductionError, AlreadyPrinted) as e:
+                        flash("error", str(e))
+                    st.rerun()
         else:
             if label["print_status"] in ("barcode_reserved", "error"):
                 if st.button("🖨️ " + T("print_save") + f" ({label['barcode']})", type="primary",

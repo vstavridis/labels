@@ -17,8 +17,8 @@ Microsoft identity + Graph, `src/vspm/testing_graph.py`).
 
 **Not verified here** (no Microsoft account available to the developer): that `/shares` resolves your
 specific new-style `1drv.ms/f/c/…` and `1drv.ms/x/c/…` links, that OneDrive honours `If-Match` on
-`PUT /content` for your account (the **end-to-end copy test checks exactly this** before production
-writing can be enabled), and refresh-token lifetime. If a link cannot be resolved, enter the path in
+`PUT /content` for your account (covered by the automated tests against a fake Graph only), and
+refresh-token lifetime. If a link cannot be resolved, enter the path in
 your OneDrive instead of the link (e.g. `Documents/Ετικέτες`) — the app then uses
 `/me/drive/root:/<path>`.
 
@@ -50,11 +50,11 @@ Every production record is first stored in PostgreSQL (label row + Excel payload
    download again and verify the rows
 ```
 
-* **Off until proven:** with `onedrive` mode, rows stay **staged** until (1) the *end-to-end test on the
-  COPY* passed and (2) an admin switched on *automatic writing to the PRODUCTION workbook*. The test
-  appends a test row to the **copy**, uploads with If-Match, reads it back, checks that all other parts
-  of the file are identical, and checks that an upload with a stale eTag is **refused**. If OneDrive
-  accepted the stale upload, the test fails and production writing cannot be enabled.
+* **When:** with `onedrive` mode every printed label is written to the production workbook right after
+  printing, by one background writer (the labels of a «Print DYMO / Excel» series go in together). An
+  admin can pause writing in *Settings → Cloud sources*; rows then stay **staged** until it is switched
+  on again. (Earlier versions required an end-to-end test on a copy of the workbook first; the owner
+  removed that step.)
 * **Errors:** a rejected upload (network, permission, storage full) keeps the rows in the queue with
   status *error* and the message; *conflict* means the workbook kept changing (3 attempts) — nothing
   was overwritten. *Sync pending rows now* retries.

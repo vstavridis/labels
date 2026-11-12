@@ -78,8 +78,8 @@ VSPM_EXCEL_REQUIRE_TEST_COPY=true
 - [ ] D2 **Πίνακας ελέγχου**: the 5 latest scans appear; open the chosen document.
 - [ ] D3 **Ανάγνωση με AI** → rows appear. Compare each row with the scan; correct values; check ⚠ fields
       and the label type.
-- [ ] D4 Approve **one** row (tick Εγκρ. + confirmation box), **Αποθήκευση**.
-- [ ] D5 **Ετικέτα & εκτύπωση**: select that row; check the preview; **Εκτύπωση & Αποθήκευση** once.
+- [ ] D4 Keep **one** row in the document (delete the others in the table; changes are saved at once).
+- [ ] D5 **Ετικέτα & εκτύπωση**: check the preview; **Εκτύπωση DYMO / Excel** once.
 - [ ] D6 Label comes out → **Η ετικέτα βγήκε σωστά**. Compare with a production label; scan the barcode.
 - [ ] D7 Press **Έλεγχος ετικέτας και Excel** (or `vspm verify-label <BARCODE>`): every line OK.
 - [ ] D8 Open `data\test_workbook\Σχισμενα.xlsx` in Excel: exactly one new row, values as on the label,
@@ -166,8 +166,8 @@ How browser printing works and what was investigated: [BROWSER_PRINTING.md](BROW
 
 Verified in code: link → item resolution with the owner's token, device-code sign-in with encrypted token
 storage and refresh, template listing by exact name / COUNTER prefix, version change detection, broken
-template refused, workbook read-only inspection, copy test (If-Match, read-back, untouched parts, stale
-eTag refused), production gate, retry after a concurrent save, conflict and error kept pending, two
+template refused, workbook read-only inspection, writing with If-Match / read-back / untouched parts, pause switch,
+background writer, retry after a concurrent save, conflict and error kept pending, two
 instances writing each row once, Google folder link parsing (`tests/test_cloud_sources.py`, UI test in
 `tests/test_ui.py`). Needs your accounts 🔑:
 
@@ -176,9 +176,8 @@ instances writing each row once, Google folder link parsing (`tests/test_cloud_s
 - [ ] C3 🔑🖨️ *Refresh DYMO templates*: VS, PG, PG0, EX *updated*; TEST0001 on each looks identical to DYMO Label.
 - [ ] C4 🔑 Change a template in DYMO Label and save to OneDrive → after a refresh a new version is used; an
       older label reprints with its original layout.
-- [ ] C5 🔑 *Test Excel workbook access* resolves `Σχισμενα.xlsx`; *End-to-end test on the COPY* all ✅; open the
-      copy in Excel Online and check the test row, formulas L–O, other sheets and links.
-- [ ] C6 🔑🏭 Only then: enable production writing; print one label; check the row in Excel Online; save a change
+- [ ] C5 🔑 *Test Excel workbook access* resolves `Σχισμενα.xlsx` (read-only).
+- [ ] C6 🔑🏭 Print one label (writing to the production workbook is on); check the row in Excel Online; save a change
       from Excel on one PC and print on the other (the change must be kept).
 - [ ] C7 🔑 Google Drive: folder shared with the service account; *Test Google Drive connection* lists 5 scans.
 

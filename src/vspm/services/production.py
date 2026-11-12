@@ -49,6 +49,8 @@ MESSAGES = {
     "print_failed": ("Η εκτύπωση απέτυχε: {e}", "Print failed: {e}"),
     "excel_nothing": ("Excel: δεν υπάρχει εκκρεμότητα για αυτή την ετικέτα", "Excel: nothing queued for this label"),
     "excel_already": ("Excel: έχει ήδη καταχωρηθεί", "Excel: already synchronized"),
+    "excel_background": ("Excel: η γραμμή γράφεται στο βιβλίο του OneDrive (σε λίγα δευτερόλεπτα).",
+                         "Excel: the row is being written to the OneDrive workbook (a few seconds)."),
     "excel_staged": ("Excel: η γραμμή μπήκε σε αναμονή. Καταχωρήστε την από το Ιστορικό.",
                      "Excel: row staged. Apply it from the History page (or reconcile after entering it manually)."),
     "excel_queued": ("Excel: στάλθηκε στην ουρά του υπολογιστή Excel.", "Excel: queued for the designated Excel computer."),
@@ -188,7 +190,8 @@ class ProductionService:
         """The operator checked the label: confirm its uncertain values/template and approve it.
         Returns the errors that still block printing (empty when the row can be printed)."""
         row = self.repo.get_row(row_id)
-        if row is None or self.repo.label_for_row(row_id) is not None:
+        label = self.repo.label_for_row(row_id) if row is not None else None
+        if row is None or (label is not None and label["first_printed_at"]):
             return {"row": "already printed or deleted"}
         row.flags = {k: v for k, v in row.flags.items() if v != "uncertain"}
         row.template_needs_confirmation = False
@@ -406,7 +409,14 @@ class ProductionService:
         lab = self.repo.get_label(lid)
         if lab["excel_status"] == ExcelStatus.not_queued.value:
             self._queue_excel(lab, op)
-            msgs.extend(self.sync_excel(lid, operator=op))
+            if self.s.excel_mode == ExcelMode.onedrive and self.cloud_excel is not None \
+                    and self.s.excel_background_sync and self.cloud_excel.production_enabled():
+                # Printing goes on at the printer's speed; one background writer adds the rows of all the
+                # labels printed meanwhile to the workbook in one upload.
+                self.cloud_excel.request_sync(op)
+                msgs.append(self._m("excel_background"))
+            else:
+                msgs.extend(self.sync_excel(lid, operator=op))
         if first_success and self.photo_stamper is not None:
             self.photo_stamper.request_for_row(lab["production_row_id"])  # background, never blocks printing
         lab = self.repo.get_label(lid)
@@ -585,7 +595,7 @@ class ProductionService:
             return [self._m("excel_staged")]
         if mode == ExcelMode.onedrive:
             # The row is already stored in the database; the single OneDrive writer adds it to the workbook
-            # (or keeps it staged until automatic writing has been tested on a copy and enabled).
+            # (or keeps it staged while an admin has paused writing).
             if self.cloud_excel is None:
                 return self._excel_failed(label_id, mode.value, "OneDrive workbook sync is not configured", "error")
             res = self.cloud_excel.sync_pending(op, label_ids=[label_id])

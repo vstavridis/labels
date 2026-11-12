@@ -20,9 +20,11 @@ recorded in the Excel workbook automatically.
 4. **Έλεγχος γραμμών**: compare each row with the scan on the left.
    * Correct anything wrong directly in the table. Cells marked **⚠** were hard to read — check them.
    * Check the label type (VS / PG / PG0 / EX).
-   * Tick **Εγκρ.** on the rows that are correct, tick the confirmation box, press **Αποθήκευση**.
-5. **Ετικέτα & εκτύπωση**: choose a row, look at the preview, press **Εκτύπωση & Αποθήκευση**.
-   When the label comes out, press **Η ετικέτα βγήκε σωστά** (or **ΔΕΝ βγήκε** → **Επανεκτύπωση**).
+   * Every change is saved at once (no Save button). **⬇ Fill** copies the first row's value down a column.
+5. **Ετικέτα & εκτύπωση**: look at the preview, press **Εκτύπωση DYMO / Excel**: every label of the document
+   that is not printed yet is printed one after the other, each with its own barcode and Excel row.
+   Pressing it confirms the values marked ⚠. To check one label, choose it under *Γραμμή παραγωγής*:
+   **Η ετικέτα βγήκε σωστά** (or **ΔΕΝ βγήκε** → **Επανεκτύπωση**).
    A reprint always uses the same barcode and never adds a second Excel row.
 6. If Excel could not be updated (e.g. the workbook was open), the label is still safe. Use
    **Ιστορικό → Εγγραφή στο Excel τώρα** later.

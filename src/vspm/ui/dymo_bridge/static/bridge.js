@@ -416,6 +416,11 @@ async function runJob(job, userInitiated) {
     if (!initDone)
         await detect();
     if (!diag.service_present || !diag.selected_printer) {
+        // Right after the page opened the printer list may not be ready yet: look once more.
+        initDone = false;
+        await detect();
+    }
+    if (!diag.service_present || !diag.selected_printer) {
         const reason = !diag.service_present ? t("service_missing") : t("choose_printer");
         currentJobView = { job, state: "not_submitted", message: reason, problems: [] };
         pushResult(makeResult(job, "not_submitted", { error: reason }));
