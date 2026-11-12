@@ -13,7 +13,7 @@ from typing import Optional
 
 import streamlit as st
 
-from vspm.services.browser_print import JobInProgress
+from vspm.services.browser_print import AlreadySent, JobInProgress
 from vspm.services.production import (
     AlreadyPrinted, PossibleDuplicate, PreviousPrintUnknown, ProductionError, StationNotVerified, ValidationFailed,
 )
@@ -117,21 +117,46 @@ def start(ctx, doc_id: int) -> None:
     _prepare(ctx, limit=1)  # the first label goes to the printer at once; the others follow in the next run
 
 
+def _start_job(ctx, b: dict, rid: int):
+    """start_browser_print; a job this session created for the row but never handed to the browser (the
+    run that created it was cut short by a new browser report) is cancelled and made again - safe, since
+    no browser ever had it."""
+    kw = dict(session_id=session_id(), station_id=st.session_state.get("station_id"),
+              printer=st.session_state.get("station_printer"), operator=operator())
+    try:
+        return ctx.production.start_browser_print(rid, **kw)
+    except AlreadySent:
+        raise
+    except JobInProgress:
+        label = ctx.repo.label_for_row(rid)
+        job = ctx.browser.pending_job_for_label(label["id"]) if label else None
+        handed = {j["job_key"] for j in b["jobs"]}
+        if job is not None and job["job_key"] in handed:
+            return None  # already handed over (this run was cut short right after that)
+        if job is None or job["session_id"] != session_id():
+            raise
+        ctx.browser.cancel(job["job_key"], operator())
+        return ctx.production.start_browser_print(rid, **kw)
+
+
 def _prepare(ctx, limit: Optional[int] = None) -> None:
-    """Reserve the barcodes and create the print jobs of the next rows of the series."""
+    """Reserve the barcodes and create the print jobs of the next rows of the series.
+
+    A row leaves b["rows"] only after its job was handed over (b["jobs"]): Streamlit can stop this run at
+    any moment when the browser reports, and a row must never get lost in between."""
     b = st.session_state.get("batch")
     n = 0
     while b and b["rows"] and (limit is None or n < limit):
-        rid = b["rows"].pop(0)
+        rid = b["rows"][0]
         try:
-            job = ctx.production.start_browser_print(
-                rid, session_id=session_id(), station_id=st.session_state.get("station_id"),
-                printer=st.session_state.get("station_printer"), operator=operator())
+            job = _start_job(ctx, b, rid)
         except PossibleDuplicate as e:
+            b["rows"].pop(0)
             st.session_state["possible_duplicate"] = {"row_id": rid, "msg": str(e)}
             _skip(ctx, rid, e)
             continue
         except PreviousPrintUnknown as e:
+            b["rows"].pop(0)
             st.session_state["unknown_print"] = {"row_id": rid, "barcode": e.barcode}
             _skip(ctx, rid, e)
             continue
@@ -140,11 +165,16 @@ def _prepare(ctx, limit: Optional[int] = None) -> None:
             b["rows"] = []
             break
         except (ValidationFailed, JobInProgress, AlreadyPrinted, ProductionError) as e:
+            b["rows"].pop(0)
             _skip(ctx, rid, e)
             continue
+        if job is None:
+            b["rows"] = b["rows"][1:]
+            continue
         ctx.production.defer([job.label_id])
-        b["jobs"].append(job.for_browser())
-        b["labels"].append(job.label_id)
+        b["jobs"] = b["jobs"] + [job.for_browser()]
+        b["labels"] = b["labels"] + [job.label_id]
+        b["rows"] = b["rows"][1:]
         n += 1
 
 

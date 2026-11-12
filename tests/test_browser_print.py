@@ -310,3 +310,29 @@ def test_label_sent_after_the_series_was_stopped_is_not_lost(ctx):
     assert ctx.browser.job(job.job_key)["status"] == "uncertain" and msgs
     with pytest.raises(PreviousPrintUnknown):  # the operator is asked before it is printed again
         start(ctx, ctx.repo.get_label(job.label_id)["production_row_id"])
+
+
+def test_series_preparation_cut_short_loses_no_label(ctx, monkeypatch):
+    """Streamlit can stop the run that prepares the series when the browser reports the first label: a
+    job created but never handed to the browser must be made again, and no row may get lost."""
+    import streamlit as st
+    from vspm.ui.views import batch_print
+    monkeypatch.setattr(batch_print, "session_id", lambda: "sess-A")
+    monkeypatch.setattr(batch_print, "operator", lambda: "tester")
+    monkeypatch.setattr(batch_print, "flash", lambda *a, **k: None)
+    verify_station(ctx)
+    rids = [make_row(ctx, row_index=i, weight=str(500 + i)) for i in (1, 2, 3)]
+    j1 = start(ctx, rids[0])
+    orphan = start(ctx, rids[1])  # created in DB, the run stopped before it reached the browser
+    state = {"batch": {"doc": 1, "rows": rids[1:], "n": 3, "jobs": [j1.for_browser()], "labels": [j1.label_id],
+                       "ok": 0}, "station_id": STATION, "station_printer": PRINTER}
+    monkeypatch.setattr(st, "session_state", state)
+    batch_print._prepare(ctx)
+    b = state["batch"]
+    assert b["rows"] == [] and len(b["jobs"]) == 3
+    assert ctx.browser.job(orphan.job_key)["status"] == "cancelled"  # never sent: safe to drop
+    handed = [j["job_key"] for j in b["jobs"]]
+    assert all(ctx.browser.job(k)["status"] == "pending" for k in handed)
+    assert [j["expected_barcode"] for j in b["jobs"]][1] == orphan.barcode  # same reserved barcode
+    batch_print._prepare(ctx)  # running it again changes nothing
+    assert len(state["batch"]["jobs"]) == 3
