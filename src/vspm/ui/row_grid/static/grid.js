@@ -9,7 +9,13 @@
   const Streamlit = {
     send(type, data) { window.parent.postMessage(Object.assign({ isStreamlitMessage: true, type: type }, data), "*"); },
     ready() { this.send("streamlit:componentReady", { apiVersion: 1 }); },
-    setHeight() { this.send("streamlit:setFrameHeight", { height: document.documentElement.scrollHeight + 4 }); },
+    // The content's own height: the page's scrollHeight is never smaller than the frame itself, so using
+    // it made the frame a little taller on every resize (an endless empty scroll area).
+    setHeight() {
+      const root = document.getElementById("root");
+      const h = Math.ceil(root.getBoundingClientRect().height) + 6;
+      if (h !== this._h) { this._h = h; this.send("streamlit:setFrameHeight", { height: h }); }
+    },
     setValue(value) { this.send("streamlit:setComponentValue", { value: value, dataType: "json" }); },
   };
 
@@ -156,12 +162,26 @@
     Streamlit.setHeight();
   }
 
+  // Colours of the app's own Streamlit theme (light or dark), so the table looks like the rest of the page.
+  function applyTheme(theme) {
+    const dark = !!(theme && theme.base === "dark");
+    document.body.classList.toggle("dark", dark);
+    if (!theme) return;
+    const st = document.documentElement.style;
+    const set = (name, v) => { if (v) st.setProperty(name, v); };
+    set("--bg", theme.backgroundColor);
+    set("--fg", theme.textColor);
+    set("--head", theme.secondaryBackgroundColor);
+    set("--input", theme.backgroundColor);
+    set("--accent", theme.primaryColor);
+    if (theme.font) document.body.style.fontFamily = theme.font;
+  }
+
   function onRender(event) {
     const data = event.data;
     if (!data || data.type !== "streamlit:render") return;
     args = data.args || args;
-    const dark = data.theme && data.theme.base === "dark";
-    document.body.classList.toggle("dark", !!dark);
+    applyTheme(data.theme);
     if (args.version !== version) {  // new document, or saved on the server: start from its rows
       version = args.version;
       rows = (args.rows || []).map((r) => Object.assign({}, r));
