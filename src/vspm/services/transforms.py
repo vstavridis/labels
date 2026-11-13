@@ -16,7 +16,7 @@ import yaml
 
 from vspm.domain.models import ExcelRowPayload, LabelContent, ProductionRow, TemplateKey
 from vspm.dymo.template import TemplateSpec
-from vspm.services.customers import clean_display, normalize_key, script_profile
+from vspm.services.customers import LATIN_TO_GREEK, clean_display, normalize_key, script_profile
 
 
 class TransformError(ValueError):
@@ -56,11 +56,18 @@ class Transforms:
     # ---- material ---------------------------------------------------------------
     def find_material(self, text: str) -> Optional[Material]:
         key = normalize_key(text)
+        keys = {key, key.translate(LATIN_TO_GREEK)}  # Latin look-alike letters in a Greek abbreviation (HΛ/ZE)
         for m in self.materials:
             names = [m.canonical, *m.aliases, *([m.en] if m.en else [])]
-            if key in {normalize_key(n) for n in names}:
+            if keys & {normalize_key(n) for n in names}:
                 return m
         return None
+
+    def normalize_material(self, text: str) -> str:
+        """A known abbreviation / spelling (e.g. ΗΛ/ΖΕ, ΓΑ/ΖΕ, ΨΕ) becomes the material's full name; anything
+        else is kept as written (shown in the review table, so the operator sees what will be printed)."""
+        m = self.find_material(text or "")
+        return m.canonical if m else (text or "")
 
     def canonical_material(self, text: str) -> str:
         m = self.find_material(text)

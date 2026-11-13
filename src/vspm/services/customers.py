@@ -120,6 +120,14 @@ class CustomerService:
         if seed_file and seed_file.exists() and not self.db.one("SELECT id FROM customer_rules LIMIT 1"):
             self.import_yaml(seed_file)
 
+    def label_name(self, customer_full: str) -> str:
+        """The customer on the label and in Excel F: a rule's short name (the workbook's exact spelling)
+        when a rule gives one, otherwise the name as entered (VSPM_CUSTOMER_LABEL_SAME_AS_FULL)."""
+        sel = self.select(customer_full)
+        if sel.short_name_mapped or not getattr(self, "label_same_as_full", False):
+            return sel.short_name
+        return clean_display(customer_full)
+
     # ---- rule storage ------------------------------------------------------------
     def import_yaml(self, path: Path) -> int:
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}

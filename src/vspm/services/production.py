@@ -141,6 +141,7 @@ class ProductionService:
         self.labels_dir = settings.data_path / "labels"
         self.browser = None
         self.photo_stamper = None  # PhotoStamper, set by build_context
+        self.customers = None  # CustomerService, set by build_context (rule short names on the label)
         self.cloud_excel = None  # WorkbookSync (VSPM_EXCEL_MODE=onedrive), set by build_context
 
     # ---- helpers ------------------------------------------------------------------
@@ -169,8 +170,10 @@ class ProductionService:
 
     def _effective(self, row: ProductionRow) -> ProductionRow:
         """With VSPM_CUSTOMER_LABEL_SAME_AS_FULL the label shows the customer exactly as entered."""
-        if self.s.customer_label_same_as_full and row.customer_full and row.customer_short != row.customer_full:
-            return row.model_copy(update={"customer_short": row.customer_full})
+        if self.s.customer_label_same_as_full and row.customer_full:
+            short = self.customers.label_name(row.customer_full) if self.customers is not None else row.customer_full
+            if short != row.customer_short:
+                return row.model_copy(update={"customer_short": short})
         return row
 
     def check_printable(self, row: ProductionRow) -> dict[str, str]:

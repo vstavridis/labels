@@ -179,6 +179,8 @@ def build_context(s: Settings) -> AppContext:
     except Exception as e:
         problems["documents"] = str(e)
     documents = DocumentService(repo, source, customers, s.data_path / "documents") if source else None
+    if documents is not None:
+        documents.transforms = transforms  # material abbreviations -> full names when the AI reads a scan
 
     production = ProductionService(settings=s, db=db, repo=repo, templates=templates, transforms=transforms,
                                    allocator=allocator, printer=printer, writer=writer,
@@ -191,6 +193,7 @@ def build_context(s: Settings) -> AppContext:
     if documents is not None:
         documents.stamper = ctx.stamper
     production.photo_stamper = ctx.stamper
+    production.customers = customers
     production.cloud_excel = cloud.workbook
     ctx.browser = BrowserPrintService(db, templates, counter_mode=s.dymo_counter_mode)
     production.browser = ctx.browser

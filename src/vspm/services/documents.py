@@ -104,7 +104,7 @@ class DocumentService:
         except Exception as e:
             self.repo.update_document(doc_id, ocr_error=str(e), status=DocumentStatus.error.value)
             raise
-        rows = rows_from_extraction(out.document, self.customers)
+        rows = rows_from_extraction(out.document, self.customers, transforms=getattr(self, "transforms", None))
         self.repo.replace_rows_for_document(doc_id, rows)
         self.repo.update_document(doc_id, ocr_provider=out.provider, ocr_model=out.model, ocr_result_json=out.raw_json,
                                   ocr_error=None, status=DocumentStatus.ocr_complete.value)

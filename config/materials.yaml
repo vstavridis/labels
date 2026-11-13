@@ -2,7 +2,8 @@
 #   canonical : the Greek name used on VS/PG labels and in Excel column A
 #   en        : English name for EX labels. null = not established yet; the
 #               operator must type it (the app will not guess a translation).
-#   aliases   : other spellings that mean the same material (add when confirmed)
+#   aliases   : other spellings that mean the same material (add when confirmed). They become the
+#               full name as soon as the AI reads the sheet or the operator types them in the review.
 #
 # Only GALVANIZED is established (it appears on the EX template sample).
 # Names that are already Latin (MIXED, INOX, RAL 9003...) are used unchanged.
@@ -10,13 +11,13 @@
 materials:
   - canonical: "ΓΑΛΒΑΝΙΖΕ"
     en: "GALVANIZED"
-    aliases: []
+    aliases: ["ΓΑ/ΖΕ", "ΓΑ-ΖΕ", "ΓΑΖΕ", "ΓΑ.ΖΕ"]   # handwritten abbreviations on the production sheets
   - canonical: "ΗΛΕΚΤΡΟΓΑΛΒΑΝΙΖΕ"
     en: null
-    aliases: []
+    aliases: ["ΗΛ/ΖΕ", "ΗΛ-ΖΕ", "ΗΛΖΕ", "ΗΛ.ΖΕ"]
   - canonical: "ΝΤΕΚΑΠΕ"
     en: null
-    aliases: []
+    aliases: ["ΨΕ"]
   - canonical: "ΘΕΡΜΟ"
     en: null
     aliases: []

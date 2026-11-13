@@ -207,3 +207,18 @@ def test_print_page_sets_the_series_by_itself(env, monkeypatch, tmp_path):
     assert not any("Σειρές barcode" in e.value for e in at.error)  # nothing to set by hand
     assert not next(b for b in at.button if b.label.startswith("🖨️ Εκτύπωση DYMO / Excel")).disabled
     assert {q["series"] for q in ctx.allocator.sequences()} >= {"VS", "PG", "PG0", "EX"}
+
+
+def test_material_typed_as_abbreviation_is_saved_in_full(env):
+    from vspm.services.context import build_context
+    ctx = build_context(env)
+    doc = ctx.documents.latest(10)[0].doc_id
+    ctx.documents.run_ocr(doc, ctx.ocr_provider())
+    from vspm.ui.common import get_context
+    get_context.clear()
+    at = AppTest.from_string(PAGE.format(doc=doc), default_timeout=120)
+    at.run()
+    rows = grid_rows(ctx, doc)
+    rows[0]["material"] = "ΨΕ"
+    grid_save(at, doc, rows, f"{doc}:0:{len(rows)}")
+    assert ctx.repo.get_row(rows[0]["id"]).material == "ΝΤΕΚΑΠΕ"

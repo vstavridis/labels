@@ -130,13 +130,13 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
             row = ProductionRow(document_id=doc_id, row_index=max_idx, status=RowStatus.draft)
             for f, _, _ in FIELDS:
                 setattr(row, f, _s(er.get(f)))
+            row.material = ctx.transforms.normalize_material(row.material)  # ΨΕ -> ΝΤΕΚΑΠΕ ...
             sel = ctx.customers.select(row.customer_full)
             row.template_key = TemplateKey(er["template"]) if _s(er.get("template")) else sel.template_key
             row.template_suggested = sel.template_key
             row.template_reason = "added manually; " + sel.reason
             if not row.customer_short or getattr(ctx.customers, "label_same_as_full", False):
-                row.customer_short = row.customer_full if getattr(ctx.customers, "label_same_as_full", False) \
-                    else sel.short_name
+                row.customer_short = ctx.customers.label_name(row.customer_full)
             ctx.repo.add_row(row)
             continue
         before = original.loc[original["id"] == rid]
@@ -163,8 +163,10 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
                     row.template_key = sel.template_key
                     row.template_reason = sel.reason
                     row.template_needs_confirmation = sel.needs_confirmation
+        if row.material:
+            row.material = ctx.transforms.normalize_material(row.material)  # ΗΛ/ΖΕ -> ΗΛΕΚΤΡΟΓΑΛΒΑΝΙΖΕ ...
         if getattr(ctx.customers, "label_same_as_full", False):
-            row.customer_short = row.customer_full
+            row.customer_short = ctx.customers.label_name(row.customer_full)
             row.flags.pop("customer_short", None)
         new_tpl = _s(er.get("template"))
         if new_tpl and (row.template_key is None or new_tpl != row.template_key.value):

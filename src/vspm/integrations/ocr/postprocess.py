@@ -52,7 +52,7 @@ def normalize_value(field: str, raw: str) -> str:
 
 
 def rows_from_extraction(doc: ExtractedDocument, customers: CustomerService,
-                         threshold: float = CONFIDENCE_THRESHOLD) -> list[ProductionRow]:
+                         threshold: float = CONFIDENCE_THRESHOLD, transforms=None) -> list[ProductionRow]:
     out: list[ProductionRow] = []
     prev: dict[str, tuple[Optional[str], bool]] = {}  # field -> (value, uncertain)
     for idx, er in enumerate(sorted(doc.rows, key=lambda r: (r.page, r.row_number)), start=1):
@@ -92,13 +92,16 @@ def rows_from_extraction(doc: ExtractedDocument, customers: CustomerService,
                 row.flags[f"note:{FIELD_TO_ROW_ATTR[field]}"] = note
             prev[field] = (value, uncertain)
 
+        if transforms is not None and row.material:
+            row.material = transforms.normalize_material(row.material)  # ΗΛ/ΖΕ -> ΗΛΕΚΤΡΟΓΑΛΒΑΝΙΖΕ ...
         sel = customers.select(row.customer_full)
         row.template_suggested = sel.template_key
         row.template_key = sel.template_key
         row.template_reason = sel.reason
         row.template_needs_confirmation = sel.needs_confirmation
         if getattr(customers, "label_same_as_full", False):
-            row.customer_short = row.customer_full  # one customer value (VSPM_CUSTOMER_LABEL_SAME_AS_FULL)
+            # one customer value (VSPM_CUSTOMER_LABEL_SAME_AS_FULL), unless a rule gives the workbook's short name
+            row.customer_short = sel.short_name if sel.short_name_mapped else row.customer_full
         else:
             row.customer_short = sel.short_name
             if not sel.short_name_mapped and row.customer_full:
