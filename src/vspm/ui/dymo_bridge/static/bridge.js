@@ -533,6 +533,24 @@ function flush() {
     lastSent = key;
     Streamlit.setValue({ ...payload, report_id: uuid() });
 }
+// While a series is going on and this browser has nothing left to print, remind the server every few
+// seconds: if its run that should hand over the next labels was cut short, the series would otherwise
+// wait forever for a report that never comes.
+let pingTimer = null;
+function schedulePing() {
+    if (pingTimer !== null)
+        return;
+    pingTimer = window.setTimeout(() => {
+        pingTimer = null;
+        if (!args.series || running || halted || queue.length)
+            return;
+        const st = station();
+        const box = outbox().filter((r) => args.acked.indexOf(r.job_key) < 0);
+        note("ping");
+        Streamlit.setValue({ station_id: st.id, station_name: st.name, diagnostics: null, results: box,
+            report_id: uuid(), ping: true });
+    }, 4000);
+}
 // ---------------------------------------------------------------------------
 // UI
 // ---------------------------------------------------------------------------
@@ -664,6 +682,7 @@ async function onRender(event) {
         lang: a.lang === "en" ? "en" : "el",
         job: a.job || null,
         jobs: Array.isArray(a.jobs) ? a.jobs : [],
+        series: !!a.series,
         acked: Array.isArray(a.acked) ? a.acked : [],
         rescan_token: a.rescan_token || "",
     };
@@ -699,6 +718,8 @@ async function onRender(event) {
     }
     if (!jobs.length && !running && !halted)
         currentJobView = null;
+    if (args.series)
+        schedulePing();
     if (queue.length && !running && !halted) {
         await runQueue();
         return;

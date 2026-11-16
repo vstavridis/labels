@@ -38,6 +38,7 @@ class PhotoStamper:
         self._queue_lock = threading.Lock()
         self._waiting: set[int] = set()
         self._worker = False
+        self._last_request = 0.0
 
     @property
     def source(self):
@@ -78,11 +79,14 @@ class PhotoStamper:
             return
         self.request_document(row.document_id)
 
-    def request_document(self, doc_id: int, delay: float = 2.0) -> None:
-        """Queue a sheet for stamping. One background worker; labels printed in quick succession are
-        written onto the photo together (one download / upload) after a short pause."""
+    def request_document(self, doc_id: int, delay: float = 15.0) -> None:
+        """Queue a sheet for stamping. One background worker; it waits until no label was printed for
+        `delay` seconds, then writes all the barcodes of the series onto the photo at once (stamping is
+        heavy image work: doing it during the series slowed the printing down)."""
+        import time
         with self._queue_lock:
             self._waiting.add(doc_id)
+            self._last_request = time.time()
             if self._worker:
                 return
             self._worker = True
@@ -91,8 +95,10 @@ class PhotoStamper:
     def _work(self, delay: float) -> None:
         import time
         while True:
-            time.sleep(delay)
+            time.sleep(min(delay, 1.0))
             with self._queue_lock:
+                if time.time() - self._last_request < delay:
+                    continue  # labels still being printed
                 if not self._waiting:
                     self._worker = False
                     return

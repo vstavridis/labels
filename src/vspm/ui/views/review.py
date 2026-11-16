@@ -131,6 +131,8 @@ def apply_changes(ctx, doc_id: int, original: pd.DataFrame, edited: pd.DataFrame
             for f, _, _ in FIELDS:
                 setattr(row, f, _s(er.get(f)))
             row.material = ctx.transforms.normalize_material(row.material)  # ΨΕ -> ΝΤΕΚΑΠΕ ...
+            if not row.document_date:  # a row added by hand: today, like the rows the AI read
+                row.document_date = ctx.production.now_local().strftime("%d/%m/%Y")
             sel = ctx.customers.select(row.customer_full)
             row.template_key = TemplateKey(er["template"]) if _s(er.get("template")) else sel.template_key
             row.template_suggested = sel.template_key

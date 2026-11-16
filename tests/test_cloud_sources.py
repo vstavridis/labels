@@ -276,6 +276,7 @@ def test_rows_written_to_the_production_workbook_once_with_formulas_and_other_pa
 def test_background_writer_adds_the_rows_of_several_labels(settings, ms):
     ctx = ready_ctx(settings, ms)
     ctx.production.s = ctx.settings.model_copy(update={"excel_background_sync": True})
+    ctx.cloud.workbook.s = ctx.settings.model_copy(update={"excel_sync_quiet_seconds": 0.3})
     printed = [make_printed_label(ctx, weight=str(490 + i)) for i in range(3)]
     assert all("γράφεται" in " ".join(o.messages) or "being written" in " ".join(o.messages) for o, _ in printed)
     assert ctx.cloud.workbook.wait_idle(30)
@@ -432,3 +433,16 @@ def test_label_check_reads_the_onedrive_workbook(settings, ms):
     check = next(c for c in rep.checks if c.name == "exactly one Excel record")
     assert check.ok, check.detail
     assert "OneDrive" in check.detail
+
+
+def test_a_series_is_written_to_the_workbook_in_one_upload_after_the_last_label(settings, ms):
+    ctx = ready_ctx(settings, ms)
+    ctx.production.s = ctx.settings.model_copy(update={"excel_background_sync": True})
+    ctx.cloud.workbook.s = ctx.settings.model_copy(update={"excel_sync_quiet_seconds": 1.0})
+    book = next(i for i in ms.items.values() if i.name == "Σχισμενα.xlsx")
+    before = len(ms.puts(book.id))
+    printed = [make_printed_label(ctx, weight=str(600 + i)) for i in range(4)]  # quicker than the quiet time
+    assert ctx.cloud.workbook.wait_idle(30)
+    assert len(ms.puts(book.id)) - before == 1  # one upload for the whole series
+    for out, lab in printed:
+        assert ctx.repo.get_label(lab["id"])["excel_status"] == "synchronized"

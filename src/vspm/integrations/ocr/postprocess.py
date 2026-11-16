@@ -52,7 +52,9 @@ def normalize_value(field: str, raw: str) -> str:
 
 
 def rows_from_extraction(doc: ExtractedDocument, customers: CustomerService,
-                         threshold: float = CONFIDENCE_THRESHOLD, transforms=None) -> list[ProductionRow]:
+                         threshold: float = CONFIDENCE_THRESHOLD, transforms=None,
+                         today: Optional[str] = None) -> list[ProductionRow]:
+    """today: the date written into ΗΜΕΡ/ΝΙΑ (the day the sheet is read), instead of the handwritten one."""
     out: list[ProductionRow] = []
     prev: dict[str, tuple[Optional[str], bool]] = {}  # field -> (value, uncertain)
     for idx, er in enumerate(sorted(doc.rows, key=lambda r: (r.page, r.row_number)), start=1):
@@ -92,6 +94,10 @@ def rows_from_extraction(doc: ExtractedDocument, customers: CustomerService,
                 row.flags[f"note:{FIELD_TO_ROW_ATTR[field]}"] = note
             prev[field] = (value, uncertain)
 
+        if today:
+            row.document_date = today  # the day it is read; the operator can still change it
+            row.flags.pop("document_date", None)
+            row.flags.pop("note:document_date", None)
         if transforms is not None and row.material:
             row.material = transforms.normalize_material(row.material)  # ΗΛ/ΖΕ -> ΗΛΕΚΤΡΟΓΑΛΒΑΝΙΖΕ ...
         sel = customers.select(row.customer_full)

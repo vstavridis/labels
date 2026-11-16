@@ -337,6 +337,7 @@ class WorkbookSync:
         self._lock = threading.Lock()
         self._dirty = False
         self._running = False
+        self._last_request = 0.0
 
     # ---- status / checks ------------------------------------------------------------------
     def inspect(self, role: str) -> dict:
@@ -385,14 +386,27 @@ class WorkbookSync:
         keeps writers on other servers out). Labels printed meanwhile are picked up by the same thread."""
         with self._lock:
             self._dirty = True
+            self._last_request = time.time()
             if self._running:
                 return
             self._running = True
         threading.Thread(target=self._worker, args=(user,), name="vspm-excel-sync", daemon=True).start()
 
+    def _quiet(self) -> None:
+        """Wait until no label has been printed for a while: a series is written in ONE download / upload
+        after its last label, instead of one heavy cycle per label slowing the printing down."""
+        quiet = float(getattr(self.s, "excel_sync_quiet_seconds", 15) or 0)
+        while True:
+            with self._lock:
+                wait = quiet - (time.time() - self._last_request)
+            if wait <= 0:
+                return
+            time.sleep(min(wait, 1.0))
+
     def _worker(self, user: str) -> None:
         tries = 0
         while True:
+            self._quiet()
             with self._lock:
                 if not self._dirty or tries >= 40:
                     self._running = False

@@ -67,3 +67,14 @@ def test_rule_order_and_tolerance_to_case_accents_and_punctuation(rules, name, t
 def test_label_shows_the_rule_short_name_else_the_name_as_entered(rules):
     assert rules.label_name("Δέλτα - Εψιλού") == "ΔΕΛΤΑ"  # the workbook's spelling (Excel F)
     assert rules.label_name("ΟΠΟΙΟΣΔΗΠΟΤΕ ΑΛΛΟΣ") == "ΟΠΟΙΟΣΔΗΠΟΤΕ ΑΛΛΟΣ"
+
+
+def test_date_column_is_the_day_the_sheet_is_read():
+    customers = CustomerService(Database(":memory:"))
+    doc = ExtractedDocument.model_validate({"rows": [
+        {"row_number": 1, "customer": v("ΑΒΓ"), "weight": v("814"), "document_date": v("11-11-2026")},
+        {"row_number": 2, "customer": v("ΑΒΓ"), "weight": v("816")},
+    ]})
+    rows = rows_from_extraction(doc, customers, today="16/11/2026")
+    assert [r.document_date for r in rows] == ["16/11/2026", "16/11/2026"]
+    assert not any(k.endswith("document_date") for r in rows for k in r.flags)

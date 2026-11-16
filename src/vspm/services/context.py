@@ -4,6 +4,8 @@ UI can still start and show what needs configuring."""
 from __future__ import annotations
 
 import logging
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
@@ -181,6 +183,7 @@ def build_context(s: Settings) -> AppContext:
     documents = DocumentService(repo, source, customers, s.data_path / "documents") if source else None
     if documents is not None:
         documents.transforms = transforms  # material abbreviations -> full names when the AI reads a scan
+        documents.today = lambda: datetime.now(ZoneInfo(s.timezone)).strftime("%d/%m/%Y")  # ΗΜΕΡ/ΝΙΑ
 
     production = ProductionService(settings=s, db=db, repo=repo, templates=templates, transforms=transforms,
                                    allocator=allocator, printer=printer, writer=writer,
