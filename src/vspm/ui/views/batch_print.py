@@ -10,15 +10,14 @@ any other result stops the series so the operator can check the printer.
 from __future__ import annotations
 
 import logging
-from typing import Optional
-
 import streamlit as st
 
 from vspm.services.browser_print import AlreadySent, JobInProgress
 from vspm.services.production import (
     AlreadyPrinted, PossibleDuplicate, PreviousPrintUnknown, ProductionError, StationNotVerified, ValidationFailed,
 )
-from vspm.ui.common import T, flash, operator, session_id
+from vspm.ui.common import T, flash, lang, operator, session_id
+from vspm.ui.i18n import t
 
 log = logging.getLogger(__name__)
 
@@ -144,135 +143,223 @@ def start(ctx, doc_id: int) -> None:
                 _skip(ctx, rid, e)
         flash("success" if ok == len(ids) else "warning", T("batch_done", ok=ok, n=len(ids)))
         return
-    ids = [r.id for r in rows_to_print(ctx, doc_id)]  # confirmed one by one while preparing (faster start)
     st.session_state.pop("batch_result", None)
-    st.session_state["batch"] = {"doc": doc_id, "rows": ids, "n": len(ids), "jobs": [], "labels": [], "ok": 0}
-    _prepare(ctx, limit=1)  # the first label goes to the printer at once; the others follow in the next run
+    series = Series(doc_id, [r.id for r in rows_to_print(ctx, doc_id)], session=session_id(), user=operator(),
+                    station=st.session_state.get("station_id"), printer=st.session_state.get("station_printer"))
+    st.session_state["batch"] = series
+    series.start(ctx)
+    series.wait_for_job(0, 8.0)  # the first label goes out with this very run
 
 
-def _start_job(ctx, b: dict, rid: int):
-    """start_browser_print; a job this session created for the row but never handed to the browser (the
-    run that created it was cut short by a new browser report) is cancelled and made again - safe, since
-    no browser ever had it."""
-    kw = dict(session_id=session_id(), station_id=st.session_state.get("station_id"),
-              printer=st.session_state.get("station_printer"), operator=operator())
-    try:
-        return ctx.production.start_browser_print(rid, **kw)
-    except AlreadySent:
-        raise
-    except JobInProgress:
-        label = ctx.repo.label_for_row(rid)
-        job = ctx.browser.pending_job_for_label(label["id"]) if label else None
-        handed = {j["job_key"] for j in b["jobs"]}
-        if job is not None and job["job_key"] in handed:
-            return None  # already handed over (this run was cut short right after that)
-        if job is None or job["session_id"] != session_id():
-            raise
-        ctx.browser.cancel(job["job_key"], operator())
-        return ctx.production.start_browser_print(rid, **kw)
+class Series:
+    """A series of labels being printed from this browser.
 
+    The barcodes are reserved and the print jobs created one after the other in a SERVER THREAD: Streamlit
+    stops and restarts the page's run whenever the browser reports a label, which must never interrupt the
+    preparation (a row could get lost and the series stop half way). Every run of the page hands the
+    browser the jobs ready so far; the browser prints them back to back while the next ones are prepared."""
 
-def _prepare(ctx, limit: Optional[int] = None) -> None:
-    """Reserve the barcodes and create the print jobs of the next rows of the series.
+    def __init__(self, doc: int, rows: list[int], *, session: str, user: str, station, printer):
+        import threading
+        self.doc, self.rows, self.n = doc, list(rows), len(rows)
+        self.session, self.user, self.station, self.printer = session, user, station, printer
+        self.lang = lang()  # the thread has no Streamlit session to ask
+        self.jobs: list[dict] = []      # handed to the browser, in order
+        self.labels: list[int] = []
+        self.ok = 0
+        self.handed = 0                 # jobs given to the browser by the latest run
+        self.messages: list[tuple[str, str]] = []   # to show on the page (level, text)
+        self.state: dict = {}           # session_state entries for the page (e.g. a possible duplicate)
+        self.done = False
+        self.stopped = False
+        self.lock = threading.Lock()
+        self.changed = threading.Condition(self.lock)
+        self.thread = None
 
-    A row leaves b["rows"] only after its job was handed over (b["jobs"]): Streamlit can stop this run at
-    any moment when the browser reports, and a row must never get lost in between."""
-    b = st.session_state.get("batch")
-    n = 0
-    while b and b["rows"] and (limit is None or n < limit):
-        rid = b["rows"][0]
-        left = ctx.production.approve_row(rid, operator())  # pressing the button confirms the row
-        if left:
-            b["rows"] = b["rows"][1:]
-            row = ctx.repo.get_row(rid)
-            flash("error", T("batch_skipped", i=row.row_index if row else rid,
-                             e="; ".join(f"{k}: {v}" for k, v in left.items())))
-            continue
+    # ---- server thread --------------------------------------------------------------
+    def start(self, ctx) -> None:
+        import threading
+        self.thread = threading.Thread(target=self._run, args=(ctx,), name="vspm-series", daemon=True)
+        self.thread.start()
+
+    def _say(self, level: str, text: str) -> None:
+        with self.lock:
+            self.messages.append((level, text))
+
+    def _t(self, key: str, **kw) -> str:
+        return t(key, self.lang, **kw)
+
+    def _row_no(self, ctx, rid: int):
+        row = ctx.repo.get_row(rid)
+        return row.row_index if row else rid
+
+    def _start_job(self, ctx, rid: int):
+        """start_browser_print; a job this session made for the row earlier but never handed to a browser
+        (e.g. a series stopped meanwhile) is cancelled and made again with the same barcode - safe, since
+        no browser ever had it."""
+        kw = dict(session_id=self.session, station_id=self.station, printer=self.printer, operator=self.user)
         try:
-            job = _start_job(ctx, b, rid)
+            return ctx.production.start_browser_print(rid, **kw)
+        except AlreadySent:
+            raise
+        except JobInProgress:
+            label = ctx.repo.label_for_row(rid)
+            job = ctx.browser.pending_job_for_label(label["id"]) if label else None
+            with self.lock:
+                handed = {j["job_key"] for j in self.jobs}
+            if job is None or job["session_id"] != self.session or job["job_key"] in handed:
+                raise
+            ctx.browser.cancel(job["job_key"], self.user)
+            return ctx.production.start_browser_print(rid, **kw)
+
+    def _run(self, ctx) -> None:
+        try:
+            for rid in list(self.rows):
+                if self.stopped:
+                    break
+                self._one(ctx, rid)
+                if isinstance(self.state.get("_halt"), bool):
+                    break
+        except Exception as e:  # noqa: BLE001 - shown on the page; labels already handed stay valid
+            log.exception("print series failed")
+            self._say("error", str(e))
+        finally:
+            with self.changed:
+                self.rows = []
+                self.done = True
+                self.changed.notify_all()
+
+    def _one(self, ctx, rid: int) -> None:
+        left = ctx.production.approve_row(rid, self.user)  # pressing the button confirms the row
+        if left:
+            self._say("error", self._t("batch_skipped", i=self._row_no(ctx, rid),
+                                 e="; ".join(f"{k}: {v}" for k, v in left.items())))
+            return
+        try:
+            job = self._start_job(ctx, rid)
         except PossibleDuplicate as e:
-            b["rows"].pop(0)
-            st.session_state["possible_duplicate"] = {"row_id": rid, "msg": str(e)}
-            _skip(ctx, rid, e)
-            continue
+            with self.lock:
+                self.state["possible_duplicate"] = {"row_id": rid, "msg": str(e)}
+            self._say("warning", self._t("batch_skipped", i=self._row_no(ctx, rid), e=e))
+            return
         except PreviousPrintUnknown as e:
-            b["rows"].pop(0)
-            st.session_state["unknown_print"] = {"row_id": rid, "barcode": e.barcode}
-            _skip(ctx, rid, e)
-            continue
+            with self.lock:
+                self.state["unknown_print"] = {"row_id": rid, "barcode": e.barcode}
+            self._say("warning", self._t("batch_skipped", i=self._row_no(ctx, rid), e=e))
+            return
         except StationNotVerified as e:
-            flash("error", str(e))
-            b["rows"] = []
-            break
+            self._say("error", str(e))
+            self.state["_halt"] = True
+            return
         except (ValidationFailed, JobInProgress, AlreadyPrinted, ProductionError) as e:
-            b["rows"].pop(0)
-            _skip(ctx, rid, e)
-            continue
-        if job is None:
-            b["rows"] = b["rows"][1:]
-            continue
-        b["jobs"] = b["jobs"] + [job.for_browser()]
-        b["labels"] = b["labels"] + [job.label_id]
-        b["rows"] = b["rows"][1:]
-        n += 1
+            self._say("warning", self._t("batch_skipped", i=self._row_no(ctx, rid), e=e))
+            return
+        with self.changed:
+            if self.stopped:  # «Stop» was pressed while this one was being prepared: never hand it over
+                ctx.browser.cancel(job.job_key, self.user)
+                return
+            self.jobs = self.jobs + [job.for_browser()]
+            self.labels = self.labels + [job.label_id]
+            self.changed.notify_all()
+
+    # ---- page side ------------------------------------------------------------------
+    def wait_for_job(self, have: int, timeout: float) -> bool:
+        """Wait (at most `timeout` seconds) until there are more than `have` jobs or the preparation ended."""
+        with self.changed:
+            return self.changed.wait_for(lambda: len(self.jobs) > have or self.done, timeout=timeout)
+
+    def snapshot(self) -> list[dict]:
+        with self.lock:
+            return list(self.jobs)
+
+    def take_messages(self) -> tuple[list, dict]:
+        with self.lock:
+            msgs, self.messages = self.messages, []
+            state = {k: v for k, v in self.state.items() if not k.startswith("_")}
+            for k in state:
+                self.state.pop(k)
+            return msgs, state
 
 
 def batch_jobs(ctx) -> list[dict]:
-    """The labels of the series still to be sent by this browser (handed over all at once)."""
+    """The labels of the series still to be sent by this browser (all those ready, at once)."""
     b = st.session_state.get("batch")
-    if not b or not b["jobs"]:
+    if not isinstance(b, Series):
         return []
-    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
-    return [j for j in b["jobs"] if rows.get(j["job_key"], {}).get("status") in ("pending", "not_submitted")]
+    jobs = b.snapshot()
+    b.handed = len(jobs)
+    if not jobs:
+        return []
+    rows = ctx.browser.statuses([j["job_key"] for j in jobs])
+    return [j for j in jobs if rows.get(j["job_key"], {}).get("status") in ("pending", "not_submitted")]
 
 
-def _finish(ctx, b: dict, ok: int) -> None:
-    st.session_state["batch_result"] = {"doc": b["doc"], "ok": ok, "n": b["n"]}
+def _finish(ctx, b: "Series", ok: int) -> None:
+    st.session_state["batch_result"] = {"doc": b.doc, "ok": ok, "n": b.n}
     st.session_state.pop("batch", None)
 
 
+def _show(b: "Series") -> None:
+    msgs, state = b.take_messages()
+    for level, text in msgs:
+        flash(level, text)
+    st.session_state.update(state)
+
+
 def step(ctx) -> None:
-    """After the browser's report was recorded: hand over the rest of the series, or close it."""
+    """After the browser's report was recorded: hand over the labels prepared meanwhile, or close the series."""
     b = st.session_state.get("batch")
-    if not b:
+    if not isinstance(b, Series):
+        st.session_state.pop("batch", None)
         return
-    if b["rows"]:  # labels already handed over are printing meanwhile: hand over the next few
-        _prepare(ctx, limit=3)
-        st.rerun()
-    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
-    states = [rows.get(j["job_key"], {}).get("status") for j in b["jobs"]]
-    b["ok"] = sum(s in ("submitted", "manual_confirmed") for s in states)
-    bad = next((j for j in b["jobs"] if rows.get(j["job_key"], {}).get("status") in
+    _show(b)
+    jobs = b.snapshot()
+    rows = ctx.browser.statuses([j["job_key"] for j in jobs]) if jobs else {}
+    states = [rows.get(j["job_key"], {}).get("status") for j in jobs]
+    b.ok = sum(s in ("submitted", "manual_confirmed") for s in states)
+    bad = next((j for j in jobs if rows.get(j["job_key"], {}).get("status") in
                 ("failed", "rejected", "uncertain", "expired", "cancelled")), None)
     if bad is not None:
         row = rows[bad["job_key"]]
         flash("error", T("batch_stopped", b=row["barcode"], e=row["error"] or row["status"]))
-        for j in b["jobs"]:  # the browser stops at the first problem: the later labels were never sent
-            if rows.get(j["job_key"], {}).get("status") in ("pending", "not_submitted"):
-                ctx.browser.cancel(j["job_key"], operator())
-        _finish(ctx, b, b["ok"])
+        _halt(ctx, b)
+        _finish(ctx, b, b.ok)
         st.rerun()
-    if all(s in ("submitted", "manual_confirmed") for s in states):
-        _finish(ctx, b, b["ok"])
+    final = all(s in ("submitted", "manual_confirmed") for s in states)
+    if b.done and final:
+        _show(b)
+        _finish(ctx, b, b.ok)
         st.rerun()
+    if final and b.wait_for_job(b.handed, 3.0):
+        st.rerun()  # everything handed over is printed and the next label is ready (or none is left)
     # still being sent - or a label was not sent (no DYMO service / printer): the bridge shows «Try again»
+
+
+def _halt(ctx, b: "Series") -> None:
+    """No more labels: the preparation stops and the jobs not sent yet are cancelled."""
+    with b.lock:
+        b.stopped = True
+    for j in batch_jobs(ctx):
+        ctx.browser.cancel(j["job_key"], operator())  # a label sent meanwhile is marked uncertain, never lost
 
 
 def _stop(ctx) -> None:
     b = st.session_state.get("batch")
-    if not b:
+    if not isinstance(b, Series):
+        st.session_state.pop("batch", None)
         return
-    for j in batch_jobs(ctx):
-        ctx.browser.cancel(j["job_key"], operator())  # a label sent meanwhile is marked uncertain, never lost
-    rows = ctx.browser.statuses([j["job_key"] for j in b["jobs"]])
+    _halt(ctx, b)
+    jobs = b.snapshot()
+    rows = ctx.browser.statuses([j["job_key"] for j in jobs]) if jobs else {}
     _finish(ctx, b, sum(r["status"] in ("submitted", "manual_confirmed") for r in rows.values()))
 
 
 def progress(ctx) -> None:
     b = st.session_state.get("batch")
-    if b and b["n"]:
-        st.progress(min(1.0, b["ok"] / b["n"]), text=T("batch_progress", i=min(b["n"], b["ok"] + 1), n=b["n"]))
-        waiting = [r for r in ctx.browser.statuses([j["job_key"] for j in b["jobs"]]).values()
+    if isinstance(b, Series) and b.n:
+        st.progress(min(1.0, b.ok / b.n), text=T("batch_progress", i=min(b.n, b.ok + 1), n=b.n))
+        jobs = b.snapshot()
+        waiting = [r for r in (ctx.browser.statuses([j["job_key"] for j in jobs]) if jobs else {}).values()
                    if r["status"] == "not_submitted"]
         if waiting:
             st.warning(T("batch_waiting", e=waiting[0]["error"] or ""))

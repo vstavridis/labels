@@ -586,7 +586,7 @@ function schedulePing(): void {
     note("ping");
     Streamlit.setValue({ station_id: st.id, station_name: st.name, diagnostics: null, results: box,
                          report_id: uuid(), ping: true });
-  }, 4000);
+  }, 2000);
 }
 
 // ---------------------------------------------------------------------------

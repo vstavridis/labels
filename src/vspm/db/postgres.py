@@ -21,6 +21,7 @@ module adapts it:
 from __future__ import annotations
 
 import re
+import time
 from contextlib import contextmanager
 from typing import Any, Iterator
 
@@ -208,6 +209,26 @@ def check_connection(url: str, timeout: int = 15) -> None:
         raise DatabaseConnectError(f"Cannot connect to the database {describe_target(url)}: {msg[:300]}\n\n{hint}") from e
 
 
+# A pooled connection is checked (one extra round trip to the server) only when it was idle for a while:
+# checking it before every statement doubled the round trips of each label printed.
+CHECK_IDLE_SECONDS = 20.0
+
+
+def _check_idle(conn) -> None:
+    from psycopg_pool import ConnectionPool
+
+    if time.monotonic() - getattr(conn, "_vspm_used", 0.0) < CHECK_IDLE_SECONDS:
+        return
+    ConnectionPool.check_connection(conn)
+
+
+def _used(raw) -> None:
+    try:
+        raw._vspm_used = time.monotonic()
+    except Exception:  # noqa: BLE001 - only an optimisation
+        pass
+
+
 def _pool(url: str, min_size: int, max_size: int):
     """One pool per database URL per process (Streamlit reruns and contexts share it)."""
     from psycopg_pool import ConnectionPool
@@ -216,7 +237,7 @@ def _pool(url: str, min_size: int, max_size: int):
         _POOLS[url] = ConnectionPool(url, min_size=min_size, max_size=max_size, open=True,
                                      kwargs={"autocommit": True, "row_factory": _row_factory,
                                              "prepare_threshold": None},  # safe behind PgBouncer poolers
-                                     check=ConnectionPool.check_connection, name="vspm")
+                                     check=_check_idle, name="vspm")
     return _POOLS[url]
 
 
@@ -228,7 +249,7 @@ def close_pools(url_prefix: str = "") -> None:
 class PostgresDatabase(DatabaseBase):
     backend = "postgresql"
 
-    def __init__(self, url: str, *, min_size: int = 1, max_size: int = 4):
+    def __init__(self, url: str, *, min_size: int = 1, max_size: int = 8):
         self.url = clean_url(url)
         self.path = "postgresql"
         if self.url not in _POOLS:
@@ -248,15 +269,21 @@ class PostgresDatabase(DatabaseBase):
     @contextmanager
     def connect(self) -> Iterator[Connection]:
         with self.pool.connection() as raw:
-            yield Connection(raw, self._id_tables)
+            try:
+                yield Connection(raw, self._id_tables)
+            finally:
+                _used(raw)
 
     @contextmanager
     def transaction(self, immediate: bool = True) -> Iterator[Connection]:
         with self.pool.connection() as raw:
-            with raw.transaction():
-                if immediate:
-                    raw.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK,))
-                yield Connection(raw, self._id_tables)
+            try:
+                with raw.transaction():
+                    if immediate:
+                        raw.execute("SELECT pg_advisory_xact_lock(%s)", (WRITE_LOCK,))
+                    yield Connection(raw, self._id_tables)
+            finally:
+                _used(raw)
 
     def migrate(self) -> list[str]:
         """All pending migrations in ONE transaction under a transaction-scoped lock.

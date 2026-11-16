@@ -115,8 +115,11 @@ class Selection:
 
 
 class CustomerService:
+    RULES_TTL = 15.0  # seconds; changes made here are seen at once, changes by another server within this
+
     def __init__(self, db: Database, seed_file: Path | None = None):
         self.db = db
+        self._cache: Optional[tuple[float, list[CustomerRule]]] = None
         if seed_file and seed_file.exists() and not self.db.one("SELECT id FROM customer_rules LIMIT 1"):
             self.import_yaml(seed_file)
 
@@ -142,6 +145,7 @@ class CustomerService:
         return n
 
     def add_rule(self, rule: CustomerRule) -> int:
+        self._cache = None
         if rule.match_type == "regex":
             re.compile(rule.pattern)
         now = utcnow()
@@ -152,6 +156,7 @@ class CustomerService:
              rule.short_name, int(rule.requires_confirmation), int(rule.active), rule.notes, now, now))
 
     def update_rule(self, rule: CustomerRule) -> None:
+        self._cache = None
         if rule.match_type == "regex":
             re.compile(rule.pattern)
         self.db.execute(
@@ -161,15 +166,24 @@ class CustomerService:
              rule.short_name, int(rule.requires_confirmation), int(rule.active), rule.notes, utcnow(), rule.id))
 
     def delete_rule(self, rule_id: int) -> None:
+        self._cache = None
         self.db.execute("DELETE FROM customer_rules WHERE id=?", (rule_id,))
 
     def rules(self, include_inactive: bool = True) -> list[CustomerRule]:
+        import copy
+        import time
+        cached = self._cache
+        if cached is not None and time.monotonic() - cached[0] < self.RULES_TTL:
+            out = [copy.copy(r) for r in cached[1]]
+            return out if include_inactive else [r for r in out if r.active]
         rows = self.db.query("SELECT * FROM customer_rules ORDER BY priority, id")
         out = [CustomerRule(
             id=r["id"], priority=r["priority"], match_type=r["match_type"], pattern=r["pattern"],
             template_key=TemplateKey(r["template_key"]) if r["template_key"] else None, short_name=r["short_name"],
             requires_confirmation=bool(r["requires_confirmation"]), active=bool(r["active"]), notes=r["notes"])
             for r in rows]
+        self._cache = (time.monotonic(), out)
+        out = [copy.copy(r) for r in out]
         return out if include_inactive else [r for r in out if r.active]
 
     # ---- selection -------------------------------------------------------------
