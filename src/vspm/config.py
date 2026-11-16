@@ -91,6 +91,9 @@ class Settings(BaseSettings):
     ocr_openai_effort: str = "minimal"
     # OneDrive workbook: rows are written by a background thread right after printing (False: during the click)
     excel_background_sync: bool = True
+    # A label the browser reports as sent is recorded (print date, Excel row, photo) by a background
+    # worker, so the series goes on at the printer's pace (False: recorded during the report).
+    print_outcome_background: bool = True
     excel_sync_quiet_seconds: float = 15  # wait this long after the last printed label, then write them all
     ocr_image_max_side: int = 1600  # longest side in pixels of the picture sent to the AI
 

@@ -65,7 +65,7 @@ def settings(tmp_path, templates_yaml, workbook, pg_url) -> Settings:
         printer_mode="mock", excel_mode="direct", excel_write_enabled=True, excel_path=workbook,
         templates_config=templates_yaml, template_dir=FIXTURES / "labels", language="en",
         customers_config=FIXTURES / "customers.yaml", materials_config=ROOT / "config" / "materials.yaml",
-        operator_name="tester", computer_name="TEST-PC",
+        operator_name="tester", computer_name="TEST-PC", print_outcome_background=False,
     )
 
 

@@ -72,8 +72,27 @@ def open_print_page(page, app_server, doc_name_part="BROWSER_TEST_"):
     return page.frame_locator(BRIDGE).first
 
 
-def excel_rows(app_ctx, barcode):
-    return app_ctx.writer.find_barcodes([barcode])[barcode]
+def excel_rows(app_ctx, barcode, wait: float = 20):
+    """Rows of the barcode in the workbook. A label sent by the browser is recorded (print date, Excel row)
+    by the server's background worker, so give it a moment when the row is not there yet."""
+    import time
+    end = time.time() + wait
+    while True:
+        rows = app_ctx.writer.find_barcodes([barcode])[barcode]
+        if rows or time.time() > end:
+            return rows
+        time.sleep(0.3)
+
+
+def wait_recorded(app_ctx, row_ids, wait: float = 20):
+    import time
+    end = time.time() + wait
+    while time.time() < end:
+        labels = [app_ctx.repo.label_for_row(r) for r in row_ids]
+        if all(lab and lab["first_printed_at"] for lab in labels):
+            return labels
+        time.sleep(0.3)
+    return [app_ctx.repo.label_for_row(r) for r in row_ids]
 
 
 def test_unverified_browser_cannot_print_production_labels(browser, app_server, dymo_reset, app_ctx):
@@ -97,7 +116,8 @@ def test_print_save_prints_reserved_barcode_once_and_one_excel_row(browser, app_
     page.get_by_role("button", name=re.compile("Εκτύπωση DYMO")).click()
     page.get_by_text("Τέλος: τυπώθηκαν 1 από 1").first.wait_for()
 
-    label = app_ctx.repo.label_for_row(rid)
+    label = wait_recorded(app_ctx, [rid])[0]
+    assert label["first_printed_at"]
     barcode = label["barcode"]
     assert barcode.startswith("PG0")
     printed = jobs()
@@ -124,7 +144,11 @@ def test_print_save_prints_reserved_barcode_once_and_one_excel_row(browser, app_
     assert len(printed) == 2
     assert etree.fromstring(printed[1]["label_xml"].encode()).find(".//BarcodeObject/Text").text == barcode
     assert len(excel_rows(app_ctx, barcode)) == 1
-    kinds = [a["kind"] for a in app_ctx.repo.print_attempts(label["id"])]
+    for _ in range(60):  # the reprint is recorded in the background
+        kinds = [a["kind"] for a in app_ctx.repo.print_attempts(label["id"])]
+        if len(kinds) >= 2:
+            break
+        page.wait_for_timeout(300)
     assert kinds == ["initial", "reprint"]
     ctx.close()
 
@@ -161,7 +185,7 @@ def test_print_all_labels_of_the_document_one_after_the_other(browser, app_serve
         raise
     print(f"series of 3 labels: {time.time() - t0:.1f} s")
     rows = app_ctx.repo.rows_for_document(doc)
-    labels = [app_ctx.repo.label_for_row(r.id) for r in rows]
+    labels = wait_recorded(app_ctx, [r.id for r in rows])
     barcodes = [lab["barcode"] for lab in labels]
     assert len(set(barcodes)) == 3 and all(lab["first_printed_at"] for lab in labels)
     printed = [etree.fromstring(j["label_xml"].encode()).find(".//BarcodeObject/Text").text for j in jobs()]

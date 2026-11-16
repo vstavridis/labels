@@ -33,11 +33,19 @@ def blocking(errors: dict[str, str]) -> dict[str, str]:
 
 
 def rows_to_print(ctx, doc_id: int) -> list:
-    out = []
+    out, label_of = [], {}
     for r in ctx.repo.rows_for_document(doc_id):
         lab = ctx.repo.label_for_row(r.id)
         if lab is None or (not lab["first_printed_at"] and lab["print_status"] in ("barcode_reserved", "error")):
             out.append(r)
+            if lab is not None:
+                label_of[r.id] = lab["id"]
+    if label_of:  # already sent by a browser, still being recorded in the background: not to print again
+        ids = tuple(label_of.values())
+        sent = {x["label_id"] for x in ctx.db.query(
+            "SELECT label_id FROM print_jobs WHERE status IN ('submitted','manual_confirmed') AND label_id IN "
+            f"({','.join('?' for _ in ids)})", ids)}
+        out = [r for r in out if label_of.get(r.id) not in sent]
     return out
 
 

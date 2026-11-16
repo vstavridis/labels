@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import logging
+import queue
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -142,6 +144,10 @@ class ProductionService:
         self.browser = None
         self.photo_stamper = None  # PhotoStamper, set by build_context
         self.customers = None  # CustomerService, set by build_context (rule short names on the label)
+        self._outcomes: "queue.Queue[tuple]" = queue.Queue()
+        self._outcome_pending: set[int] = set()  # label ids waiting in the queue
+        self._outcome_lock = threading.Lock()
+        self._outcome_worker = False
         self.cloud_excel = None  # WorkbookSync (VSPM_EXCEL_MODE=onedrive), set by build_context
 
     # ---- helpers ------------------------------------------------------------------
@@ -431,10 +437,65 @@ class ProductionService:
         lab = self.repo.get_label(lid)
         return Outcome(lid, lab["barcode"], lab["print_status"], lab["excel_status"], msgs, True)
 
+    # ---- labels sent by a browser, recorded in the background -------------------------------------
+    def _queue_outcome(self, label_id: int, kind: str, job_key: str, printer, user: str, computer: str) -> None:
+        with self._outcome_lock:
+            if label_id in self._outcome_pending and kind != "reprint":
+                return
+            self._outcome_pending.add(label_id)
+            self._outcomes.put((label_id, kind, job_key, printer, user, computer))
+            if self._outcome_worker:
+                return
+            self._outcome_worker = True
+        threading.Thread(target=self._outcome_work, name="vspm-print-outcomes", daemon=True).start()
+
+    def _outcome_work(self) -> None:
+        while True:
+            try:
+                item = self._outcomes.get(timeout=2)
+            except queue.Empty:
+                with self._outcome_lock:
+                    if self._outcomes.empty():
+                        self._outcome_worker = False
+                        return
+                continue
+            label_id, kind, job_key, printer, user, computer = item
+            try:
+                label = self.repo.get_label(label_id)
+                if label is not None and not (kind != "reprint" and label["first_printed_at"]):
+                    self.record_print_outcome(label, kind, True, None, job_key, "browser", printer, user, computer)
+            except Exception:  # noqa: BLE001 - left for catch_up_outcomes (the job stays 'submitted')
+                log.exception("recording printed label %s failed", label_id)
+            finally:
+                with self._outcome_lock:
+                    self._outcome_pending.discard(label_id)
+
+    def wait_outcomes(self, timeout: float = 30) -> bool:
+        """For tests: wait until the background worker recorded every sent label."""
+        import time
+        end = time.time() + timeout
+        while time.time() < end:
+            with self._outcome_lock:
+                if not self._outcome_worker and self._outcomes.empty():
+                    return True
+            time.sleep(0.05)
+        return False
+
+    def catch_up_outcomes(self, user: str = "auto") -> int:
+        """Labels a browser reported as sent but not recorded yet (the server stopped meanwhile)."""
+        rows = self.db.query(
+            "SELECT j.label_id, j.kind, j.job_key, j.printer_name, j.station_id FROM print_jobs j JOIN labels l "
+            "ON l.id = j.label_id WHERE j.status='submitted' AND j.kind <> 'reprint' AND l.first_printed_at IS NULL")
+        for r in rows:
+            self._queue_outcome(r["label_id"], r["kind"], r["job_key"], r["printer_name"], user,
+                                r["station_id"] or "browser")
+        return len(rows)
+
     # ---- background work left over (restart, closed page) -------------------------------------
     def catch_up(self, operator: Optional[str] = None) -> None:
         """Start the background writers for Excel rows still waiting and scans not stamped yet."""
         op, _ = self._who(operator)
+        self.catch_up_outcomes(op)
         if self.s.excel_mode == ExcelMode.onedrive and self.cloud_excel is not None \
                 and self.s.excel_background_sync and self.cloud_excel.production_enabled() \
                 and self.db.one("SELECT 1 FROM labels WHERE first_printed_at IS NOT NULL AND excel_status IN "
@@ -482,9 +543,14 @@ class ProductionService:
 
     def apply_browser_result(self, job, result: dict, user: str) -> list[tuple[str, str]]:
         """Callback from BrowserPrintService for production jobs (idempotent per job)."""
-        label = self.repo.get_label(job["label_id"])
         status = result.get("status")
         computer = result.get("station_name") or result.get("station_id") or "browser"
+        if status == "submitted" and self.s.print_outcome_background:
+            # The job is already recorded as sent: the rest (print date, Excel row, photo) is written by the
+            # background worker, so this report - and the next label of a series - is not held up.
+            self._queue_outcome(job["label_id"], job["kind"], job["job_key"], result.get("printer"), user, computer)
+            return [("success", f"{job['barcode']}: {self._m('sent')}")]
+        label = self.repo.get_label(job["label_id"])
         if status == "submitted":
             out = self.record_print_outcome(label, job["kind"], True, None, job["job_key"], "browser",
                                             result.get("printer"), user, computer)

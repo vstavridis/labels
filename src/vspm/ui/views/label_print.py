@@ -15,6 +15,15 @@ def render() -> None:
     ctx = get_context()
     show_flash()
     st.title(T("nav_print"))
+    browser_mode = ctx.settings.printer_mode.value == "browser"
+    b = st.session_state.get("batch")
+    if browser_mode and b:
+        # A series is printing: only its progress and the printer bridge. Everything else on this page
+        # (preview, details, other rows) would cost database round trips on every report and slow it down.
+        from vspm.ui.views.browser_actions import bridge_section
+        batch_print.progress(ctx)
+        bridge_section(ctx)
+        return
     doc_id = doc_selector(ctx)
     if doc_id is None:
         return

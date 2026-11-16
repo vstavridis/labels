@@ -349,3 +349,24 @@ def test_series_preparation_cut_short_loses_no_label(ctx, monkeypatch):
     assert [j["expected_barcode"] for j in b["jobs"]][1] == orphan.barcode  # same reserved barcode
     batch_print._prepare(ctx)  # running it again changes nothing
     assert len(state["batch"]["jobs"]) == 3
+
+
+def test_sent_label_is_recorded_in_the_background_and_caught_up_after_a_restart(settings, clock):
+    c = build_context(with_settings(settings, printer_mode="browser", print_outcome_background=True))
+    c.production._clock = clock
+    c.browser._clock = clock
+    verify_station(c)
+    job = start(c, make_row(c))
+    out = report(c, job)  # returns at once: the label is recorded by the worker
+    assert out.messages and c.browser.job(job.job_key)["status"] == "submitted"
+    assert c.production.wait_outcomes(30)
+    lab = c.repo.get_label(job.label_id)
+    assert lab["first_printed_at"] and lab["excel_status"] == "synchronized"
+
+    # the server stopped after the browser's report but before recording: caught up later
+    job2 = start(c, make_row(c, row_index=2, weight="333"))
+    c.db.execute("UPDATE print_jobs SET status='submitted' WHERE job_key=?", (job2.job_key,))
+    assert c.repo.get_label(job2.label_id)["first_printed_at"] is None
+    assert c.production.catch_up_outcomes() == 1
+    assert c.production.wait_outcomes(30)
+    assert c.repo.get_label(job2.label_id)["first_printed_at"]
